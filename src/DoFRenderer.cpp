@@ -1641,6 +1641,10 @@ void CDoF::DoFRenderer::Dispatch(
 	bindAndDispatch(shaders_.postSmoothing1.Get(), fullWidth, fullHeight);
 	resetViews();
 	srvs[0] = resources_.postSmooth.srv.Get();
+	// Test6 compares each transparency-pass pixel with nearby opaque scene
+	// depth. The final diagnostic pass therefore needs the same full-resolution
+	// depth input as the CoC pass in addition to its existing CoC texture.
+	srvs[2] = a_depth;
 	srvs[3] = resources_.coc.srv.Get();
 	srvs[7] = resources_.postSmooth2.srv.Get();
 	srvs[11] = a_skyMaskDepth;

@@ -641,6 +641,53 @@ float RefineFarCoCAtFocusedBoundary(FocusInfo focusInfo, uint2 renderPixel, floa
 	return bestCoC;
 }
 
+float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
+{
+	uint2 inputPixel = GetInputPixel(renderPixel);
+	float3 beforeColor = TransparencyBeforeTexture[inputPixel].rgb;
+	float3 afterColor = TransparencyAfterTexture[inputPixel].rgb;
+	float3 difference = abs(afterColor - beforeColor);
+	return max(difference.r, max(difference.g, difference.b));
+}
+
+bool HasSharperOpaqueForegroundAnchor(uint2 renderPixel, float centreCoC)
+{
+	// Test6 combines the real transparency-pass signal with the otherwise
+	// independent depth/CoC signal. The wide transparency/effects pass also
+	// contains sky, windows, lights and fog, so a changed pixel is accepted only
+	// when a nearby *unchanged* pixel is both physically nearer and substantially
+	// sharper. On a veil this should find the opaque face/body depth behind the
+	// material; a large sky/effect region should have no such local anchor.
+	static const int2 offsets[20] = {
+		int2(-8, 0), int2(8, 0), int2(0, -8), int2(0, 8),
+		int2(-24, 0), int2(24, 0), int2(0, -24), int2(0, 24),
+		int2(-40, -40), int2(40, -40), int2(-40, 40), int2(40, 40),
+		int2(-56, 0), int2(56, 0), int2(0, -56), int2(0, 56),
+		int2(-112, 0), int2(112, 0), int2(0, -112), int2(0, 112)
+	};
+
+	float centreDepth = GetDepthAtRenderPixel(renderPixel);
+	float centreAbsCoC = abs(centreCoC);
+	float nearZeroCoC = 3.0f * length(SharedData::BufferDim.zw);
+
+	[loop]
+	for (int i = 0; i < 20; ++i) {
+		uint2 samplePixel = ClampFullResolutionPixel(int2(renderPixel) + offsets[i]);
+		if (GetTransparencyDeltaAtRenderPixel(samplePixel) >= TransparencyDeltaThreshold)
+			continue;
+
+		float sampleDepth = GetDepthAtRenderPixel(samplePixel);
+		float sampleAbsCoC = abs(TexCoCInput[samplePixel].r);
+		bool isNearer = sampleDepth * 1000.0f + 0.02f < centreDepth * 1000.0f;
+		bool isSubstantiallySharper = sampleAbsCoC <= nearZeroCoC ||
+			sampleAbsCoC * 2.0f + 1e-6f < centreAbsCoC;
+		if (isNearer && isSubstantiallySharper)
+			return true;
+	}
+
+	return false;
+}
+
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
 {
 	if (KeepSkySharp == 0)
@@ -1306,19 +1353,18 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test5: this is intentionally a visualization only. It marks
-	// pixels whose scene colour changed during Skyrim's transparency pass. Unlike
-	// the earlier depth-neighbour experiments, the signal does not depend on the
-	// focus plane or F-number and therefore tests whether veil/hair pixels can be
-	// identified by a genuine second renderer signal.
+	// Diagnostic Test6: magenta now means that two independent predicates agree:
+	// this pixel changed during Skyrim's transparency/effects pass, and a nearby
+	// unchanged pixel supplies a nearer, substantially sharper depth/CoC anchor.
+	// This is still visualization only; it does not alter CoC or final sharpness.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
-		uint2 inputPixel = GetInputPixel(DTid);
-		float3 beforeColor = TransparencyBeforeTexture[inputPixel].rgb;
-		float3 afterColor = TransparencyAfterTexture[inputPixel].rgb;
-		float3 difference = abs(afterColor - beforeColor);
-		float transparencySignal = max(difference.r, max(difference.g, difference.b));
-		float diagnosticMask = step(TransparencyDeltaThreshold, transparencySignal);
+		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);
+		bool hasTransparencySignal = transparencySignal >= TransparencyDeltaThreshold;
+		bool hasForegroundAnchor = false;
+		if (hasTransparencySignal)
+			hasForegroundAnchor = HasSharperOpaqueForegroundAnchor(DTid, TexCoCInput[DTid].r);
+		float diagnosticMask = hasForegroundAnchor ? 1.0f : 0.0f;
 		color.rgb = lerp(color.rgb, float3(1.0f, 0.0f, 1.0f), diagnosticMask);
 	}
 

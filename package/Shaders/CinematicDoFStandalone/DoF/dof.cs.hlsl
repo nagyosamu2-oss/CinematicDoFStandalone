@@ -169,6 +169,7 @@ cbuffer DoFCB : register(b1)
 	float2 TargetGuardAxis;
 	uint TransparencyDiagnosticEnabled;
 	float TransparencyDeltaThreshold;
+	float4 TransparencyCaptureRegion;
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -643,9 +644,21 @@ float RefineFarCoCAtFocusedBoundary(FocusInfo focusInfo, uint2 renderPixel, floa
 
 float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
 {
-	uint2 inputPixel = GetInputPixel(renderPixel);
-	float3 beforeColor = TransparencyBeforeTexture[inputPixel].rgb;
-	float3 afterColor = TransparencyAfterTexture[inputPixel].rgb;
+	// Transparency is captured before Community Shaders performs temporal
+	// upscaling, while this diagnostic is composed after upscaling. The backing
+	// texture keeps its display-sized allocation, but only the active internal-
+	// resolution viewport contains the current transparency pass. Remap the
+	// post-upscale output UV into that captured viewport instead of treating both
+	// stages as pixel-identical.
+	float2 renderUV = (float2(renderPixel) + 0.5f) * SharedData::BufferDim.zw;
+	float2 capturePosition =
+		TransparencyCaptureRegion.xy + renderUV * TransparencyCaptureRegion.zw;
+	uint2 captureMinimum = uint2(TransparencyCaptureRegion.xy);
+	uint2 captureMaximum = captureMinimum +
+		max(uint2(1, 1), uint2(TransparencyCaptureRegion.zw)) - 1;
+	uint2 capturePixel = clamp(uint2(capturePosition), captureMinimum, captureMaximum);
+	float3 beforeColor = TransparencyBeforeTexture[capturePixel].rgb;
+	float3 afterColor = TransparencyAfterTexture[capturePixel].rgb;
 	float3 difference = abs(afterColor - beforeColor);
 	return max(difference.r, max(difference.g, difference.b));
 }

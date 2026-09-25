@@ -43,8 +43,9 @@ namespace
 		Float2 targetGuardAxis;
 		std::uint32_t transparencyDiagnosticEnabled;
 		float transparencyDeltaThreshold;
+		std::array<float, 4> transparencyCaptureRegion;
 	};
-	static_assert(sizeof(DoFConstants) == 144);
+	static_assert(sizeof(DoFConstants) == 160);
 
 	struct alignas(16) SharedConstants
 	{
@@ -978,6 +979,11 @@ void CDoF::DoFRenderer::CaptureTransparencyBefore()
 			}
 			return;
 		}
+		const auto renderArea = GetActiveRenderArea(context, description);
+		transparencyCapture_.renderLeft = renderArea.left;
+		transparencyCapture_.renderTop = renderArea.top;
+		transparencyCapture_.renderWidth = renderArea.width;
+		transparencyCapture_.renderHeight = renderArea.height;
 
 		context->CopyResource(transparencyCapture_.before.resource.Get(), mainTarget.texture);
 		transparencyCapture_.pending = true;
@@ -1013,10 +1019,15 @@ void CDoF::DoFRenderer::CaptureTransparencyAfter()
 
 		D3D11_TEXTURE2D_DESC description{};
 		mainTarget.texture->GetDesc(&description);
+		const auto renderArea = GetActiveRenderArea(context, description);
 		if (description.Width != transparencyCapture_.width ||
 			description.Height != transparencyCapture_.height ||
 			description.Format != transparencyCapture_.format ||
-			description.SampleDesc.Count != 1) {
+			description.SampleDesc.Count != 1 ||
+			renderArea.left != transparencyCapture_.renderLeft ||
+			renderArea.top != transparencyCapture_.renderTop ||
+			renderArea.width != transparencyCapture_.renderWidth ||
+			renderArea.height != transparencyCapture_.renderHeight) {
 			return;
 		}
 
@@ -1025,9 +1036,13 @@ void CDoF::DoFRenderer::CaptureTransparencyAfter()
 		if (!loggedTransparencyCapture_) {
 			loggedTransparencyCapture_ = true;
 			spdlog::info(
-				"Transparency pass snapshots captured ({}x{}, format {})",
+				"Transparency pass snapshots captured (texture {}x{}, active region ({}, {}) {}x{}, format {})",
 				description.Width,
 				description.Height,
+				renderArea.left,
+				renderArea.top,
+				renderArea.width,
+				renderArea.height,
 				static_cast<std::uint32_t>(description.Format));
 		}
 	} catch (...) {
@@ -1455,7 +1470,12 @@ void CDoF::DoFRenderer::Dispatch(
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
 		.transparencyDiagnosticEnabled = transparencyCapture_.valid ? 1U : 0U,
-		.transparencyDeltaThreshold = 0.00025F
+		.transparencyDeltaThreshold = 0.00025F,
+		.transparencyCaptureRegion = {
+			static_cast<float>(transparencyCapture_.renderLeft),
+			static_cast<float>(transparencyCapture_.renderTop),
+			static_cast<float>(transparencyCapture_.renderWidth),
+			static_cast<float>(transparencyCapture_.renderHeight) }
 	};
 	const SharedConstants sharedData{
 		.cameraData = GetCameraData(),

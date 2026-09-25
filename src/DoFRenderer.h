@@ -82,6 +82,10 @@ namespace CDoF
 			ID3D11Device* device{};
 			std::uint32_t width{};
 			std::uint32_t height{};
+			std::uint32_t renderLeft{};
+			std::uint32_t renderTop{};
+			std::uint32_t renderWidth{};
+			std::uint32_t renderHeight{};
 			DXGI_FORMAT format{ DXGI_FORMAT_UNKNOWN };
 			Texture before;
 			Texture after;

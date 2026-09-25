@@ -162,7 +162,8 @@ namespace CDoF
 			std::uint32_t a_inputWidth,
 			std::uint32_t a_inputHeight,
 			std::uint32_t a_renderLeft,
-			std::uint32_t a_renderTop);
+			std::uint32_t a_renderTop,
+			const TargetFocusSample* a_transparencySubjectGuard);
 		bool DispatchSilhouette(
 			ID3D11DeviceContext* a_context,
 			ID3D11ShaderResourceView* a_skyMaskDepth,
@@ -210,6 +211,7 @@ namespace CDoF
 		bool loggedExteriorTransparencySignatures_{ false };
 		bool loggedSelectedTransparencyCapture_{ false };
 		bool loggedSelectedTransparencyCaptureFailure_{ false };
+		bool loggedTransparencySubjectGuard_{ false };
 		Shaders shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
 		ID3D11Device* shaderDevice_{};

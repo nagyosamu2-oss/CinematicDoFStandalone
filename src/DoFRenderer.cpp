@@ -44,8 +44,13 @@ namespace
 		std::uint32_t transparencyDiagnosticEnabled;
 		float transparencyDeltaThreshold;
 		std::array<float, 4> transparencyCaptureRegion;
+		std::uint32_t transparencySubjectGuardEnabled;
+		Float2 transparencySubjectGuardCenter;
+		float transparencySubjectGuardPadding;
+		Float2 transparencySubjectGuardRadius;
+		Float2 transparencySubjectGuardAxis;
 	};
-	static_assert(sizeof(DoFConstants) == 160);
+	static_assert(sizeof(DoFConstants) == 192);
 
 	struct alignas(16) SharedConstants
 	{
@@ -1446,6 +1451,22 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 			transparencyCapture_.format == inputDescription.Format &&
 			transparencyCapture_.before.srv && transparencyCapture_.after.srv;
 		transparencyCapture_.valid = transparencyDiagnosticValid;
+		const auto transparencySubjectFocus =
+			transparencyDiagnosticValid ? GetPlayerTargetFocus() : std::nullopt;
+		const auto* transparencySubjectGuard =
+			transparencySubjectFocus && transparencySubjectFocus->guardValid ?
+				std::addressof(*transparencySubjectFocus) : nullptr;
+		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
+			loggedTransparencySubjectGuard_ = true;
+			spdlog::info(
+				"Test14 player transparency gate activated (centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
+				transparencySubjectGuard->guardCenter[0],
+				transparencySubjectGuard->guardCenter[1],
+				transparencySubjectGuard->guardRadius[0],
+				transparencySubjectGuard->guardRadius[1],
+				transparencySubjectGuard->guardAxis[0],
+				transparencySubjectGuard->guardAxis[1]);
+		}
 		ID3D11RenderTargetView* restoreRTV = currentRTV.Get();
 		OutputMergerRestore restore{ context, restoreRTV, currentDSV.Get() };
 		context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -1500,7 +1521,8 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 			inputDescription.Width,
 			inputDescription.Height,
 			renderArea.left,
-			renderArea.top);
+			renderArea.top,
+			transparencySubjectGuard);
 		transparencyCapture_.valid = false;
 		const D3D11_BOX outputBox{
 			0U,
@@ -1543,7 +1565,8 @@ void CDoF::DoFRenderer::Dispatch(
 	std::uint32_t a_inputWidth,
 	std::uint32_t a_inputHeight,
 	std::uint32_t a_renderLeft,
-	std::uint32_t a_renderTop)
+	std::uint32_t a_renderTop,
+	const TargetFocusSample* a_transparencySubjectGuard)
 {
 	const auto effectiveNearFocusRangeMeters =
 		a_targetNearFocusMinimumMeters > 0.0F ?
@@ -1590,7 +1613,18 @@ void CDoF::DoFRenderer::Dispatch(
 			static_cast<float>(transparencyCapture_.renderLeft),
 			static_cast<float>(transparencyCapture_.renderTop),
 			static_cast<float>(transparencyCapture_.renderWidth),
-			static_cast<float>(transparencyCapture_.renderHeight) }
+			static_cast<float>(transparencyCapture_.renderHeight) },
+		.transparencySubjectGuardEnabled = a_transparencySubjectGuard ? 1U : 0U,
+		.transparencySubjectGuardCenter = a_transparencySubjectGuard ?
+			Float2{ a_transparencySubjectGuard->guardCenter[0], a_transparencySubjectGuard->guardCenter[1] } :
+			Float2{ 0.5F, 0.5F },
+		.transparencySubjectGuardPadding = 0.0F,
+		.transparencySubjectGuardRadius = a_transparencySubjectGuard ?
+			Float2{ a_transparencySubjectGuard->guardRadius[0], a_transparencySubjectGuard->guardRadius[1] } :
+			Float2{},
+		.transparencySubjectGuardAxis = a_transparencySubjectGuard ?
+			Float2{ a_transparencySubjectGuard->guardAxis[0], a_transparencySubjectGuard->guardAxis[1] } :
+			Float2{}
 	};
 	const SharedConstants sharedData{
 		.cameraData = GetCameraData(),

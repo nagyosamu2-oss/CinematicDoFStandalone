@@ -170,6 +170,11 @@ cbuffer DoFCB : register(b1)
 	uint TransparencyDiagnosticEnabled;
 	float TransparencyDeltaThreshold;
 	float4 TransparencyCaptureRegion;
+	uint TransparencySubjectGuardEnabled;
+	float2 TransparencySubjectGuardCenter;
+	float TransparencySubjectGuardPadding;
+	float2 TransparencySubjectGuardRadius;
+	float2 TransparencySubjectGuardAxis;
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -726,6 +731,39 @@ int GetOpaqueForegroundDepthClusterClass(uint2 renderPixel)
 	}
 
 	return foundAnyAnchor ? 1 : 0;
+}
+
+float GetTransparencySubjectGate(float2 uv)
+{
+	if (TransparencySubjectGuardEnabled == 0)
+		return 0.0f;
+
+	float aspect = SharedData::BufferDim.x / max(SharedData::BufferDim.y, 1.0f);
+	float2 samplePoint = float2(uv.x * aspect, uv.y);
+	float2 centre = float2(TransparencySubjectGuardCenter.x * aspect, TransparencySubjectGuardCenter.y);
+	float2 axis = float2(TransparencySubjectGuardAxis.x * aspect, TransparencySubjectGuardAxis.y);
+	float axisLengthSquared = dot(axis, axis);
+
+	// Test14 deliberately gives the veil more room than the normal actor guard.
+	// Extend below the feet for the train and widen the capsule for loose cloth,
+	// while still rejecting distant foliage across the rest of the screen.
+	if (axisLengthSquared > 1e-6f)
+	{
+		float2 start = centre - axis * 1.65f;
+		float2 end = centre + axis * 1.25f;
+		float2 segment = end - start;
+		float along = saturate(dot(samplePoint - start, segment) /
+			max(dot(segment, segment), 1e-6f));
+		float distanceToAxis = length(samplePoint - (start + segment * along));
+		float radius = max(TransparencySubjectGuardRadius.x * 4.0f, 0.055f);
+		return 1.0f - smoothstep(radius * 0.88f, radius, distanceToAxis);
+	}
+
+	float2 expandedRadius = max(
+		TransparencySubjectGuardRadius * float2(2.6f, 1.45f),
+		float2(0.055f, 0.09f));
+	float2 ellipse = (uv - TransparencySubjectGuardCenter) / expandedRadius;
+	return 1.0f - smoothstep(0.88f, 1.0f, length(ellipse));
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -1393,21 +1431,16 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test8: cyan means that one unchanged, physically nearer anchor
-	// was found; magenta means that at least two nearer anchors have coherent
-	// depths. Unlike Test7 the pair need not be on opposite sides. The classifier
-	// remains independent of all optical/focus settings and does not alter CoC.
+	// Diagnostic Test14: cyan is a transparency-pass change that also lies in the
+	// expanded player capsule. Unselected transparency remains normally coloured,
+	// making it easy to see whether foliage is rejected and the veil train survives.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);
 		bool hasTransparencySignal = transparencySignal >= TransparencyDeltaThreshold;
-		int clusterClass = 0;
-		if (hasTransparencySignal)
-			clusterClass = GetOpaqueForegroundDepthClusterClass(DTid);
-		if (clusterClass == 1)
+		float subjectGate = GetTransparencySubjectGate(uv);
+		if (hasTransparencySignal && subjectGate > 0.5f)
 			color.rgb = float3(0.0f, 1.0f, 1.0f);
-		else if (clusterClass >= 2)
-			color.rgb = float3(1.0f, 0.0f, 1.0f);
 	}
 
 	RWTexOut[DTid] = float4(color.rgb, 1.0f);

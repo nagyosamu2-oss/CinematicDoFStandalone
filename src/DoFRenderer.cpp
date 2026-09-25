@@ -951,9 +951,18 @@ void CDoF::DoFRenderer::ApplySilhouette(RE::RENDER_TARGET a_outputTarget)
 void CDoF::DoFRenderer::CaptureTransparencyBefore()
 {
 	std::scoped_lock lock(mutex_);
-	transparencyCapture_.pending = false;
-	transparencyCapture_.valid = false;
 	if (!settings_.enabled || silhouetteSettings_.enabled || permanentlyDisabled_) {
+		transparencyCapture_.pending = false;
+		transparencyCapture_.valid = false;
+		return;
+	}
+
+	// Diagnostic Test10: one frame can enter the engine transparency routine
+	// more than once (for example for another accumulator/view).  Test8/9
+	// replaced the snapshots on every entry, so the final pair did not
+	// necessarily describe the first/main transparency pass.  Keep the first
+	// completed pair until Render() consumes it at the post-processing boundary.
+	if (transparencyCapture_.pending || transparencyCapture_.valid) {
 		return;
 	}
 

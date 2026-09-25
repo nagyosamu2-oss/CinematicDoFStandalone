@@ -196,7 +196,8 @@ namespace
 	constexpr float kGameUnitToMeters = 0.01428F;
 	constexpr float kCommunityShadersActorNearFocusMinimumMeters = 0.17F;
 	constexpr float kStandaloneNearFocusMinimumMeters = 0.15F;
-	constexpr std::uint32_t kMainTransparencyRenderFlags = 0x45U;
+	constexpr std::uint32_t kInteriorTransparencyRenderFlags = 0x45U;
+	constexpr std::uint32_t kExteriorTransparencyRenderFlags = 0x0CU;
 
 	RE::NiCamera* FindActiveNiCamera(RE::NiAVObject* a_object)
 	{
@@ -1017,14 +1018,30 @@ void CDoF::DoFRenderer::RecordTransparencyCall(
 
 void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
 {
+	// Test16 keeps the proven interior call but selects the distinct exterior
+	// signature observed by Test12.  Reject unrelated hot-path calls before
+	// taking the renderer mutex.
+	if (a_renderFlags != kInteriorTransparencyRenderFlags &&
+		a_renderFlags != kExteriorTransparencyRenderFlags) {
+		return;
+	}
+
 	std::scoped_lock lock(mutex_);
 	if (!settings_.enabled || silhouetteSettings_.enabled || permanentlyDisabled_) {
 		transparencyCapture_.pending = false;
 		transparencyCapture_.valid = false;
 		return;
 	}
-	if (a_renderFlags != kMainTransparencyRenderFlags ||
-		transparencyCapture_.pending || transparencyCapture_.valid) {
+	const auto player = RE::PlayerCharacter::GetSingleton();
+	const auto cell = player ? player->GetParentCell() : nullptr;
+	if (!cell) {
+		return;
+	}
+	const auto interior = cell->IsInteriorCell();
+	const auto selectedRenderFlags = interior ?
+		kInteriorTransparencyRenderFlags : kExteriorTransparencyRenderFlags;
+	if (a_renderFlags != selectedRenderFlags || transparencyCapture_.pending ||
+		transparencyCapture_.valid) {
 		return;
 	}
 
@@ -1046,7 +1063,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!EnsureTransparencyCapture(device, description)) {
 			if (!loggedSelectedTransparencyCaptureFailure_) {
 				loggedSelectedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Test13 transparency capture is unavailable for the main target");
+				spdlog::warn("Test16 transparency capture is unavailable for the main target");
 			}
 			return;
 		}
@@ -1063,7 +1080,10 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		transparencyCapture_.valid = false;
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test13 transparency capture failed before flags=0x45");
+			spdlog::warn(
+				"Test16 transparency capture failed before {} flags=0x{:02X}",
+				interior ? "INTERIOR" : "EXTERIOR",
+				selectedRenderFlags);
 		}
 	}
 }
@@ -1107,7 +1127,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		if (!loggedSelectedTransparencyCapture_) {
 			loggedSelectedTransparencyCapture_ = true;
 			spdlog::info(
-				"Test13 captured transparency snapshots for flags=0x45 (texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				"Test16 captured cell-aware transparency snapshots (texture {}x{}, active region ({}, {}) {}x{}, format {})",
 				description.Width,
 				description.Height,
 				renderArea.left,
@@ -1120,7 +1140,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		transparencyCapture_.valid = false;
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test13 transparency capture failed after flags=0x45");
+			spdlog::warn("Test16 transparency capture failed after the selected cell-aware call");
 		}
 	}
 }
@@ -1459,7 +1479,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test15 transparency delta bands activated (centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
+				"Test16 cell-aware transparency signature bands activated (interior=0x45, exterior=0x0C; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],

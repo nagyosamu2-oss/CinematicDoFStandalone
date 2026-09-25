@@ -1431,10 +1431,10 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test15: classify the transparency-pass delta inside the expanded
-	// player capsule. The opaque-outfit control from Test14 showed a low-level
-	// background delta throughout the capsule, so colour bands reveal whether the
-	// veil produces a separable stronger signal before choosing a production cutoff.
+	// Diagnostic Test16: retain Test15's delta bands while the native side selects
+	// flags=0x45 indoors and flags=0x0C outdoors. This makes it immediately visible
+	// whether the exterior-only signature removes the large sky/terrain update yet
+	// still contains the transparent veil.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);

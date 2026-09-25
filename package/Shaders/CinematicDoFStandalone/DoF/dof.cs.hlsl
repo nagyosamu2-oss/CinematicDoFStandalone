@@ -670,38 +670,49 @@ bool AreForegroundAnchorDepthsCoherent(float firstDepth, float secondDepth)
 	return abs(firstMetres - secondMetres) <= toleranceMetres;
 }
 
-bool HasBilateralOpaqueForegroundBridge(uint2 renderPixel)
+int GetOpaqueForegroundDepthClusterClass(uint2 renderPixel)
 {
-	// Test7 deliberately contains no CoC, focus-distance, focal-length or
-	// aperture term. A changed transparency-pass pixel is accepted only when an
-	// opposed pair of unchanged pixels is physically nearer and both depths are
-	// coherent. This tests the conservative case where a thin transparent region
-	// is enclosed by the same opaque foreground subject.
-	static const int radii[6] = { 8, 16, 32, 56, 80, 112 };
-	static const int2 directions[4] = {
-		int2(1, 0), int2(0, 1), int2(1, 1), int2(1, -1)
+	// Test8 keeps the settings-independent geometry test from Test7, but removes
+	// the overly strict requirement for matching anchors on opposite sides. A
+	// coherent pair may now occur in any directions around the pixel. This fits a
+	// veil or loose hair edge, where the visible opaque face/body often exists on
+	// only one side of the transparent pixel.
+	static const int2 offsets[24] = {
+		int2(-8, 0), int2(8, 0), int2(0, -8), int2(0, 8),
+		int2(-24, 0), int2(24, 0), int2(0, -24), int2(0, 24),
+		int2(-24, -24), int2(24, -24), int2(-24, 24), int2(24, 24),
+		int2(-56, 0), int2(56, 0), int2(0, -56), int2(0, 56),
+		int2(-56, -56), int2(56, -56), int2(-56, 56), int2(56, 56),
+		int2(-112, 0), int2(112, 0), int2(0, -112), int2(0, 112)
 	};
 
 	float centreDepth = GetDepthAtRenderPixel(renderPixel);
+	bool foundAnyAnchor = false;
 
 	[loop]
-	for (int radiusIndex = 0; radiusIndex < 6; ++radiusIndex) {
+	for (int offsetIndex = 0; offsetIndex < 24; ++offsetIndex) {
+		uint2 samplePixel = ClampFullResolutionPixel(int2(renderPixel) + offsets[offsetIndex]);
+		float sampleDepth;
+		if (!IsOpaqueNearerAnchor(samplePixel, centreDepth, sampleDepth))
+			continue;
+		foundAnyAnchor = true;
+
 		[unroll]
-		for (int directionIndex = 0; directionIndex < 4; ++directionIndex) {
-			int2 offset = directions[directionIndex] * radii[radiusIndex];
-			uint2 firstPixel = ClampFullResolutionPixel(int2(renderPixel) + offset);
-			uint2 secondPixel = ClampFullResolutionPixel(int2(renderPixel) - offset);
-			float firstDepth;
-			float secondDepth;
-			bool firstIsAnchor = IsOpaqueNearerAnchor(firstPixel, centreDepth, firstDepth);
-			bool secondIsAnchor = IsOpaqueNearerAnchor(secondPixel, centreDepth, secondDepth);
-			if (firstIsAnchor && secondIsAnchor &&
-				AreForegroundAnchorDepthsCoherent(firstDepth, secondDepth))
-				return true;
+		for (int previousIndex = 0; previousIndex < 24; ++previousIndex) {
+			if (previousIndex >= offsetIndex)
+				continue;
+			uint2 previousPixel = ClampFullResolutionPixel(
+				int2(renderPixel) + offsets[previousIndex]);
+			float previousDepth;
+			bool previousIsAnchor =
+				IsOpaqueNearerAnchor(previousPixel, centreDepth, previousDepth);
+			if (previousIsAnchor &&
+				AreForegroundAnchorDepthsCoherent(sampleDepth, previousDepth))
+				return 2;
 		}
 	}
 
-	return false;
+	return foundAnyAnchor ? 1 : 0;
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -1369,19 +1380,21 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test7: magenta means that this pixel changed during Skyrim's
-	// transparency/effects pass and an opposed, depth-coherent pair of unchanged
-	// foreground pixels bridges it. The classifier is independent of all optical
-	// and focus settings. This remains visualization only and does not alter CoC.
+	// Diagnostic Test8: cyan means that one unchanged, physically nearer anchor
+	// was found; magenta means that at least two nearer anchors have coherent
+	// depths. Unlike Test7 the pair need not be on opposite sides. The classifier
+	// remains independent of all optical/focus settings and does not alter CoC.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);
 		bool hasTransparencySignal = transparencySignal >= TransparencyDeltaThreshold;
-		bool hasForegroundBridge = false;
+		int clusterClass = 0;
 		if (hasTransparencySignal)
-			hasForegroundBridge = HasBilateralOpaqueForegroundBridge(DTid);
-		float diagnosticMask = hasForegroundBridge ? 1.0f : 0.0f;
-		color.rgb = lerp(color.rgb, float3(1.0f, 0.0f, 1.0f), diagnosticMask);
+			clusterClass = GetOpaqueForegroundDepthClusterClass(DTid);
+		if (clusterClass == 1)
+			color.rgb = float3(0.0f, 1.0f, 1.0f);
+		else if (clusterClass >= 2)
+			color.rgb = float3(1.0f, 0.0f, 1.0f);
 	}
 
 	RWTexOut[DTid] = float4(color.rgb, 1.0f);

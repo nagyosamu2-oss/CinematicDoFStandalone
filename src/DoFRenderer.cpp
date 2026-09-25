@@ -191,21 +191,6 @@ namespace
 	constexpr float kGameUnitToMeters = 0.01428F;
 	constexpr float kCommunityShadersActorNearFocusMinimumMeters = 0.17F;
 	constexpr float kStandaloneNearFocusMinimumMeters = 0.15F;
-	constexpr auto kTransparencyDiagnosticPath =
-		L"Data\\SKSE\\Plugins\\CinematicDoFStandalone-TransparencyTest11.ini";
-
-	std::uint32_t GetTransparencyDiagnosticPassIndex()
-	{
-		static const auto passIndex = std::clamp(
-			GetPrivateProfileIntW(
-				L"TransparencyDiagnostic",
-				L"PassIndex",
-				1,
-				kTransparencyDiagnosticPath),
-			1U,
-			32U);
-		return passIndex;
-	}
 
 	RE::NiCamera* FindActiveNiCamera(RE::NiAVObject* a_object)
 	{
@@ -963,122 +948,65 @@ void CDoF::DoFRenderer::ApplySilhouette(RE::RENDER_TARGET a_outputTarget)
 	}
 }
 
-void CDoF::DoFRenderer::CaptureTransparencyBefore()
+void CDoF::DoFRenderer::RecordTransparencyCall(
+	RE::BSShaderAccumulator* a_accumulator,
+	std::uint32_t a_renderFlags)
 {
-	std::scoped_lock lock(mutex_);
-	if (!settings_.enabled || silhouetteSettings_.enabled || permanentlyDisabled_) {
-		transparencyCapture_.pending = false;
-		transparencyCapture_.valid = false;
+	// Diagnostic Test12 deliberately performs no GPU copy, allocation, logging,
+	// or lock acquisition in this hot hook.  The engine invokes this path more
+	// than one thousand times per frame in the observed setup, so only compact
+	// fixed-capacity metadata is collected here and reported at the existing
+	// post-processing boundary.
+	++transparencyCallCount_;
+	if (!a_accumulator) {
+		++transparencyNullAccumulatorCount_;
+		return;
+	}
+	const auto runtimeData = a_accumulator->GetRuntimeData();
+	if (!runtimeData) {
+		++transparencyNullAccumulatorCount_;
 		return;
 	}
 
-	// Diagnostic Test11: one frame can enter the engine transparency routine
-	// more than once for different accumulators/views. Select one ordinal so the
-	// interior and exterior calls can be identified without rebuilding the DLL.
-	const auto currentPassIndex = ++transparencyCallIndex_;
-	if (transparencyCapture_.pending || transparencyCapture_.valid) {
+	const auto renderMode = static_cast<std::uint32_t>(runtimeData->renderMode);
+	for (std::size_t index = 0; index < transparencyCallSignatureCount_; ++index) {
+		auto& signature = transparencyCallSignatures_[index];
+		if (signature.renderFlags != a_renderFlags ||
+			signature.renderMode != renderMode ||
+			signature.currentActive != runtimeData->currentActive ||
+			signature.firstPerson != runtimeData->firstPerson ||
+			signature.drawDecals != runtimeData->drawDecals) {
+			continue;
+		}
+		++signature.callCount;
+		signature.minimumPass = std::min(signature.minimumPass, runtimeData->currentPass);
+		signature.maximumPass = std::max(signature.maximumPass, runtimeData->currentPass);
+		signature.minimumBucket = std::min(signature.minimumBucket, runtimeData->currentBucket);
+		signature.maximumBucket = std::max(signature.maximumBucket, runtimeData->currentBucket);
+		signature.multipleAccumulators |=
+			signature.firstAccumulator != reinterpret_cast<std::uintptr_t>(a_accumulator);
 		return;
 	}
-	if (currentPassIndex != GetTransparencyDiagnosticPassIndex()) {
+
+	if (transparencyCallSignatureCount_ >= transparencyCallSignatures_.size()) {
+		++transparencyCallOverflowCount_;
 		return;
 	}
-
-	try {
-		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		if (!renderer) {
-			return;
-		}
-		auto& rendererData = renderer->GetRuntimeData();
-		auto device = reinterpret_cast<ID3D11Device*>(rendererData.forwarder);
-		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
-		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
-		if (!device || !context || !mainTarget.texture) {
-			return;
-		}
-
-		D3D11_TEXTURE2D_DESC description{};
-		mainTarget.texture->GetDesc(&description);
-		if (!EnsureTransparencyCapture(device, description)) {
-			if (!loggedTransparencyCaptureFailure_) {
-				loggedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Transparency diagnostic capture is unavailable for the main target");
-			}
-			return;
-		}
-		const auto renderArea = GetActiveRenderArea(context, description);
-		transparencyCapture_.renderLeft = renderArea.left;
-		transparencyCapture_.renderTop = renderArea.top;
-		transparencyCapture_.renderWidth = renderArea.width;
-		transparencyCapture_.renderHeight = renderArea.height;
-
-		context->CopyResource(transparencyCapture_.before.resource.Get(), mainTarget.texture);
-		transparencyCapture_.pending = true;
-	} catch (...) {
-		transparencyCapture_.pending = false;
-		transparencyCapture_.valid = false;
-		if (!loggedTransparencyCaptureFailure_) {
-			loggedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Transparency diagnostic capture failed before the transparency pass");
-		}
-	}
-}
-
-void CDoF::DoFRenderer::CaptureTransparencyAfter()
-{
-	std::scoped_lock lock(mutex_);
-	if (!transparencyCapture_.pending) {
-		return;
-	}
-	transparencyCapture_.pending = false;
-
-	try {
-		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		if (!renderer) {
-			return;
-		}
-		auto& rendererData = renderer->GetRuntimeData();
-		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
-		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
-		if (!context || !mainTarget.texture) {
-			return;
-		}
-
-		D3D11_TEXTURE2D_DESC description{};
-		mainTarget.texture->GetDesc(&description);
-		const auto renderArea = GetActiveRenderArea(context, description);
-		if (description.Width != transparencyCapture_.width ||
-			description.Height != transparencyCapture_.height ||
-			description.Format != transparencyCapture_.format ||
-			description.SampleDesc.Count != 1 ||
-			renderArea.left != transparencyCapture_.renderLeft ||
-			renderArea.top != transparencyCapture_.renderTop ||
-			renderArea.width != transparencyCapture_.renderWidth ||
-			renderArea.height != transparencyCapture_.renderHeight) {
-			return;
-		}
-
-		context->CopyResource(transparencyCapture_.after.resource.Get(), mainTarget.texture);
-		transparencyCapture_.valid = true;
-		if (!loggedTransparencyCapture_) {
-			loggedTransparencyCapture_ = true;
-			spdlog::info(
-				"Transparency pass {} snapshots captured (texture {}x{}, active region ({}, {}) {}x{}, format {})",
-				GetTransparencyDiagnosticPassIndex(),
-				description.Width,
-				description.Height,
-				renderArea.left,
-				renderArea.top,
-				renderArea.width,
-				renderArea.height,
-				static_cast<std::uint32_t>(description.Format));
-		}
-	} catch (...) {
-		transparencyCapture_.valid = false;
-		if (!loggedTransparencyCaptureFailure_) {
-			loggedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Transparency diagnostic capture failed after the transparency pass");
-		}
-	}
+	auto& signature = transparencyCallSignatures_[transparencyCallSignatureCount_++];
+	signature = {
+		.renderFlags = a_renderFlags,
+		.renderMode = renderMode,
+		.minimumPass = runtimeData->currentPass,
+		.maximumPass = runtimeData->currentPass,
+		.minimumBucket = runtimeData->currentBucket,
+		.maximumBucket = runtimeData->currentBucket,
+		.callCount = 1,
+		.firstAccumulator = reinterpret_cast<std::uintptr_t>(a_accumulator),
+		.currentActive = runtimeData->currentActive,
+		.firstPerson = runtimeData->firstPerson,
+		.drawDecals = runtimeData->drawDecals,
+		.multipleAccumulators = false
+	};
 }
 
 void CDoF::DoFRenderer::ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget)
@@ -1093,22 +1021,55 @@ void CDoF::DoFRenderer::ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarge
 void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 {
 	std::scoped_lock lock(mutex_);
-	if (!loggedTransparencyPassSelection_) {
-		loggedTransparencyPassSelection_ = true;
-		spdlog::info(
-			"Transparency diagnostic Test11 selected pass index {} (change the dedicated INI and restart the game to select another pass)",
-			GetTransparencyDiagnosticPassIndex());
+	const auto player = RE::PlayerCharacter::GetSingleton();
+	const auto cell = player ? player->GetParentCell() : nullptr;
+	if (cell && transparencyCallCount_ > 0) {
+		const auto interior = cell->IsInteriorCell();
+		if (!transparencyLocationInitialized_ ||
+			transparencyPreviousLocationInterior_ != interior) {
+			transparencyLocationInitialized_ = true;
+			transparencyPreviousLocationInterior_ = interior;
+			transparencyStableLocationFrames_ = 1;
+		} else {
+			++transparencyStableLocationFrames_;
+		}
+
+		auto& locationAlreadyLogged = interior ?
+			loggedInteriorTransparencySignatures_ : loggedExteriorTransparencySignatures_;
+		if (!locationAlreadyLogged && transparencyStableLocationFrames_ >= 30) {
+			locationAlreadyLogged = true;
+			spdlog::info(
+				"Transparency diagnostic Test12 {} frame: calls={}, signatures={}, overflow={}, unavailable-accumulator={}, cell=0x{:08X}",
+				interior ? "INTERIOR" : "EXTERIOR",
+				transparencyCallCount_,
+				transparencyCallSignatureCount_,
+				transparencyCallOverflowCount_,
+				transparencyNullAccumulatorCount_,
+				cell->GetFormID());
+			for (std::size_t index = 0; index < transparencyCallSignatureCount_; ++index) {
+				const auto& signature = transparencyCallSignatures_[index];
+				spdlog::info(
+					"Test12 {} signature {:02}: flags=0x{:08X}, mode=0x{:02X}, active={}, first-person={}, decals={}, calls={}, pass={}..{}, bucket={}..{}, multiple-accumulators={}",
+					interior ? "INTERIOR" : "EXTERIOR",
+					index,
+					signature.renderFlags,
+					signature.renderMode,
+					signature.currentActive,
+					signature.firstPerson,
+					signature.drawDecals,
+					signature.callCount,
+					signature.minimumPass,
+					signature.maximumPass,
+					signature.minimumBucket,
+					signature.maximumBucket,
+					signature.multipleAccumulators);
+			}
+		}
 	}
-	if (transparencyCallIndex_ > maximumTransparencyCallsObserved_) {
-		maximumTransparencyCallsObserved_ = transparencyCallIndex_;
-		spdlog::info(
-			"Transparency diagnostic Test11 observed a new maximum of {} transparency call(s) before one post-processing frame",
-			maximumTransparencyCallsObserved_);
-	}
-	// The post-processing boundary consumes the selected pair and starts the
-	// ordinal count for the next frame. Keep the captured textures valid until
-	// Dispatch() below has sampled them.
-	transparencyCallIndex_ = 0;
+	transparencyCallSignatureCount_ = 0;
+	transparencyCallCount_ = 0;
+	transparencyCallOverflowCount_ = 0;
+	transparencyNullAccumulatorCount_ = 0;
 	// Silhouette colors are display-space choices.  Apply them only after the
 	// game's image-space pass so exposure, tonemapping, and color grading cannot
 	// tint an exact white/black palette.  Normal DoF remains on this HDR-side path.

@@ -51,9 +51,8 @@ namespace
 		static void Thunk(RE::BSShaderAccumulator* a_accumulator, std::uint32_t a_renderFlags)
 		{
 			auto& renderer = CDoF::DoFRenderer::GetSingleton();
-			renderer.CaptureTransparencyBefore();
+			renderer.RecordTransparencyCall(a_accumulator, a_renderFlags);
 			function(a_accumulator, a_renderFlags);
-			renderer.CaptureTransparencyAfter();
 		}
 
 		static inline Function function{};
@@ -79,7 +78,7 @@ namespace
 			return false;
 		}
 
-		spdlog::info("Installed transparency-pass diagnostic hook at 0x{:X}", renderTransparency.address());
+		spdlog::info("Installed transparency call-signature diagnostic hook at 0x{:X}", renderTransparency.address());
 		return true;
 	}
 
@@ -100,7 +99,7 @@ namespace
 
 		spdlog::info("Installed main post-processing hook at 0x{:X}", mainPostProcessing.address());
 		if (!InstallTransparencyHook()) {
-			spdlog::critical("Failed to install transparency-pass diagnostic hook");
+			spdlog::critical("Failed to install transparency call-signature diagnostic hook");
 		}
 	}
 

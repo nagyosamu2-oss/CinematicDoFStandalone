@@ -15,8 +15,7 @@ namespace CDoF
 		void SetTargetFocus(
 			TargetFocusSettings a_settings,
 			Settings a_dialogueLensSettings);
-		void CaptureTransparencyBefore();
-		void CaptureTransparencyAfter();
+		void RecordTransparencyCall(RE::BSShaderAccumulator* a_accumulator, std::uint32_t a_renderFlags);
 		void ApplyBeforePostProcessing();
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
 
@@ -91,6 +90,22 @@ namespace CDoF
 			Texture after;
 			bool pending{ false };
 			bool valid{ false };
+		};
+
+		struct TransparencyCallSignature
+		{
+			std::uint32_t renderFlags{};
+			std::uint32_t renderMode{};
+			std::uint32_t minimumPass{};
+			std::uint32_t maximumPass{};
+			std::uint32_t minimumBucket{};
+			std::uint32_t maximumBucket{};
+			std::uint32_t callCount{};
+			std::uintptr_t firstAccumulator{};
+			bool currentActive{};
+			bool firstPerson{};
+			bool drawDecals{};
+			bool multipleAccumulators{};
 		};
 
 		struct Shaders
@@ -180,8 +195,17 @@ namespace CDoF
 		Settings dialogueLensSettings_{};
 		Resources resources_{};
 		TransparencyCapture transparencyCapture_{};
-		std::uint32_t transparencyCallIndex_{};
-		std::uint32_t maximumTransparencyCallsObserved_{};
+		static constexpr std::size_t kMaximumTransparencyCallSignatures = 64;
+		std::array<TransparencyCallSignature, kMaximumTransparencyCallSignatures> transparencyCallSignatures_{};
+		std::size_t transparencyCallSignatureCount_{};
+		std::uint32_t transparencyCallCount_{};
+		std::uint32_t transparencyCallOverflowCount_{};
+		std::uint32_t transparencyNullAccumulatorCount_{};
+		std::uint32_t transparencyStableLocationFrames_{};
+		bool transparencyLocationInitialized_{ false };
+		bool transparencyPreviousLocationInterior_{ false };
+		bool loggedInteriorTransparencySignatures_{ false };
+		bool loggedExteriorTransparencySignatures_{ false };
 		Shaders shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
 		ID3D11Device* shaderDevice_{};
@@ -203,9 +227,6 @@ namespace CDoF
 		bool loggedTargetNearFocusAssist_{ false };
 		bool loggedRenderAreaDiagnostics_{ false };
 		bool dialogueOnlyPrewarmed_{ false };
-		bool loggedTransparencyCapture_{ false };
-		bool loggedTransparencyCaptureFailure_{ false };
-		bool loggedTransparencyPassSelection_{ false };
 		TargetFocusMode targetFocusMode_{ TargetFocusMode::kNone };
 		std::mutex mutex_;
 	};

@@ -650,39 +650,55 @@ float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
 	return max(difference.r, max(difference.g, difference.b));
 }
 
-bool HasSharperOpaqueForegroundAnchor(uint2 renderPixel, float centreCoC)
+bool IsOpaqueNearerAnchor(uint2 samplePixel, float centreDepth, out float sampleDepth)
 {
-	// Test6 combines the real transparency-pass signal with the otherwise
-	// independent depth/CoC signal. The wide transparency/effects pass also
-	// contains sky, windows, lights and fog, so a changed pixel is accepted only
-	// when a nearby *unchanged* pixel is both physically nearer and substantially
-	// sharper. On a veil this should find the opaque face/body depth behind the
-	// material; a large sky/effect region should have no such local anchor.
-	static const int2 offsets[20] = {
-		int2(-8, 0), int2(8, 0), int2(0, -8), int2(0, 8),
-		int2(-24, 0), int2(24, 0), int2(0, -24), int2(0, 24),
-		int2(-40, -40), int2(40, -40), int2(-40, 40), int2(40, 40),
-		int2(-56, 0), int2(56, 0), int2(0, -56), int2(0, 56),
-		int2(-112, 0), int2(112, 0), int2(0, -112), int2(0, 112)
+	sampleDepth = GetDepthAtRenderPixel(samplePixel);
+	bool isOpaqueInCapturedPass =
+		GetTransparencyDeltaAtRenderPixel(samplePixel) < TransparencyDeltaThreshold;
+	bool isNearer = sampleDepth * 1000.0f + 0.02f < centreDepth * 1000.0f;
+	return isOpaqueInCapturedPass && isNearer;
+}
+
+bool AreForegroundAnchorDepthsCoherent(float firstDepth, float secondDepth)
+{
+	float firstMetres = firstDepth * 1000.0f;
+	float secondMetres = secondDepth * 1000.0f;
+	// Permit normal depth variation across a face/body while rejecting pairs
+	// that merely happen to touch unrelated foreground objects. The relative
+	// allowance keeps the test usable at larger camera distances.
+	float toleranceMetres = max(0.35f, 0.12f * min(firstMetres, secondMetres));
+	return abs(firstMetres - secondMetres) <= toleranceMetres;
+}
+
+bool HasBilateralOpaqueForegroundBridge(uint2 renderPixel)
+{
+	// Test7 deliberately contains no CoC, focus-distance, focal-length or
+	// aperture term. A changed transparency-pass pixel is accepted only when an
+	// opposed pair of unchanged pixels is physically nearer and both depths are
+	// coherent. This tests the conservative case where a thin transparent region
+	// is enclosed by the same opaque foreground subject.
+	static const int radii[6] = { 8, 16, 32, 56, 80, 112 };
+	static const int2 directions[4] = {
+		int2(1, 0), int2(0, 1), int2(1, 1), int2(1, -1)
 	};
 
 	float centreDepth = GetDepthAtRenderPixel(renderPixel);
-	float centreAbsCoC = abs(centreCoC);
-	float nearZeroCoC = 3.0f * length(SharedData::BufferDim.zw);
 
 	[loop]
-	for (int i = 0; i < 20; ++i) {
-		uint2 samplePixel = ClampFullResolutionPixel(int2(renderPixel) + offsets[i]);
-		if (GetTransparencyDeltaAtRenderPixel(samplePixel) >= TransparencyDeltaThreshold)
-			continue;
-
-		float sampleDepth = GetDepthAtRenderPixel(samplePixel);
-		float sampleAbsCoC = abs(TexCoCInput[samplePixel].r);
-		bool isNearer = sampleDepth * 1000.0f + 0.02f < centreDepth * 1000.0f;
-		bool isSubstantiallySharper = sampleAbsCoC <= nearZeroCoC ||
-			sampleAbsCoC * 2.0f + 1e-6f < centreAbsCoC;
-		if (isNearer && isSubstantiallySharper)
-			return true;
+	for (int radiusIndex = 0; radiusIndex < 6; ++radiusIndex) {
+		[unroll]
+		for (int directionIndex = 0; directionIndex < 4; ++directionIndex) {
+			int2 offset = directions[directionIndex] * radii[radiusIndex];
+			uint2 firstPixel = ClampFullResolutionPixel(int2(renderPixel) + offset);
+			uint2 secondPixel = ClampFullResolutionPixel(int2(renderPixel) - offset);
+			float firstDepth;
+			float secondDepth;
+			bool firstIsAnchor = IsOpaqueNearerAnchor(firstPixel, centreDepth, firstDepth);
+			bool secondIsAnchor = IsOpaqueNearerAnchor(secondPixel, centreDepth, secondDepth);
+			if (firstIsAnchor && secondIsAnchor &&
+				AreForegroundAnchorDepthsCoherent(firstDepth, secondDepth))
+				return true;
+		}
 	}
 
 	return false;
@@ -1353,18 +1369,18 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test6: magenta now means that two independent predicates agree:
-	// this pixel changed during Skyrim's transparency/effects pass, and a nearby
-	// unchanged pixel supplies a nearer, substantially sharper depth/CoC anchor.
-	// This is still visualization only; it does not alter CoC or final sharpness.
+	// Diagnostic Test7: magenta means that this pixel changed during Skyrim's
+	// transparency/effects pass and an opposed, depth-coherent pair of unchanged
+	// foreground pixels bridges it. The classifier is independent of all optical
+	// and focus settings. This remains visualization only and does not alter CoC.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);
 		bool hasTransparencySignal = transparencySignal >= TransparencyDeltaThreshold;
-		bool hasForegroundAnchor = false;
+		bool hasForegroundBridge = false;
 		if (hasTransparencySignal)
-			hasForegroundAnchor = HasSharperOpaqueForegroundAnchor(DTid, TexCoCInput[DTid].r);
-		float diagnosticMask = hasForegroundAnchor ? 1.0f : 0.0f;
+			hasForegroundBridge = HasBilateralOpaqueForegroundBridge(DTid);
+		float diagnosticMask = hasForegroundBridge ? 1.0f : 0.0f;
 		color.rgb = lerp(color.rgb, float3(1.0f, 0.0f, 1.0f), diagnosticMask);
 	}
 

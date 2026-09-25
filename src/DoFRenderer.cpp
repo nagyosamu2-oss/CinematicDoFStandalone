@@ -41,8 +41,8 @@ namespace
 		float headGuardRadius;
 		std::uint32_t keepSkySharp;
 		Float2 targetGuardAxis;
-		std::uint32_t padding4;
-		std::uint32_t padding5;
+		std::uint32_t transparencyDiagnosticEnabled;
+		float transparencyDeltaThreshold;
 	};
 	static_assert(sizeof(DoFConstants) == 144);
 
@@ -289,6 +289,54 @@ bool CDoF::DoFRenderer::CreateTexture(
 	if (Failed(a_device->CreateUnorderedAccessView(a_texture.resource.Get(), nullptr, a_texture.uav.GetAddressOf()), "CreateUnorderedAccessView")) {
 		return false;
 	}
+	return true;
+}
+
+bool CDoF::DoFRenderer::EnsureTransparencyCapture(
+	ID3D11Device* a_device,
+	const D3D11_TEXTURE2D_DESC& a_sourceDescription)
+{
+	if (transparencyCapture_.device == a_device &&
+		transparencyCapture_.width == a_sourceDescription.Width &&
+		transparencyCapture_.height == a_sourceDescription.Height &&
+		transparencyCapture_.format == a_sourceDescription.Format &&
+		transparencyCapture_.before.resource && transparencyCapture_.after.resource) {
+		return true;
+	}
+
+	transparencyCapture_ = {};
+	if (!a_device || a_sourceDescription.SampleDesc.Count != 1 ||
+		a_sourceDescription.ArraySize != 1 || a_sourceDescription.MipLevels != 1) {
+		return false;
+	}
+
+	auto description = a_sourceDescription;
+	description.Usage = D3D11_USAGE_DEFAULT;
+	description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	description.CPUAccessFlags = 0;
+	description.MiscFlags = 0;
+
+	const auto createSnapshot = [&](Texture& a_texture) {
+		if (Failed(a_device->CreateTexture2D(
+				&description, nullptr, a_texture.resource.ReleaseAndGetAddressOf()),
+			"Create transparency snapshot texture")) {
+			return false;
+		}
+		return !Failed(a_device->CreateShaderResourceView(
+			a_texture.resource.Get(), nullptr, a_texture.srv.ReleaseAndGetAddressOf()),
+			"Create transparency snapshot SRV");
+	};
+
+	if (!createSnapshot(transparencyCapture_.before) ||
+		!createSnapshot(transparencyCapture_.after)) {
+		transparencyCapture_ = {};
+		return false;
+	}
+
+	transparencyCapture_.device = a_device;
+	transparencyCapture_.width = a_sourceDescription.Width;
+	transparencyCapture_.height = a_sourceDescription.Height;
+	transparencyCapture_.format = a_sourceDescription.Format;
 	return true;
 }
 
@@ -899,6 +947,98 @@ void CDoF::DoFRenderer::ApplySilhouette(RE::RENDER_TARGET a_outputTarget)
 	}
 }
 
+void CDoF::DoFRenderer::CaptureTransparencyBefore()
+{
+	std::scoped_lock lock(mutex_);
+	transparencyCapture_.pending = false;
+	transparencyCapture_.valid = false;
+	if (!settings_.enabled || silhouetteSettings_.enabled || permanentlyDisabled_) {
+		return;
+	}
+
+	try {
+		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		if (!renderer) {
+			return;
+		}
+		auto& rendererData = renderer->GetRuntimeData();
+		auto device = reinterpret_cast<ID3D11Device*>(rendererData.forwarder);
+		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
+		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
+		if (!device || !context || !mainTarget.texture) {
+			return;
+		}
+
+		D3D11_TEXTURE2D_DESC description{};
+		mainTarget.texture->GetDesc(&description);
+		if (!EnsureTransparencyCapture(device, description)) {
+			if (!loggedTransparencyCaptureFailure_) {
+				loggedTransparencyCaptureFailure_ = true;
+				spdlog::warn("Transparency diagnostic capture is unavailable for the main target");
+			}
+			return;
+		}
+
+		context->CopyResource(transparencyCapture_.before.resource.Get(), mainTarget.texture);
+		transparencyCapture_.pending = true;
+	} catch (...) {
+		transparencyCapture_.pending = false;
+		transparencyCapture_.valid = false;
+		if (!loggedTransparencyCaptureFailure_) {
+			loggedTransparencyCaptureFailure_ = true;
+			spdlog::warn("Transparency diagnostic capture failed before the transparency pass");
+		}
+	}
+}
+
+void CDoF::DoFRenderer::CaptureTransparencyAfter()
+{
+	std::scoped_lock lock(mutex_);
+	if (!transparencyCapture_.pending) {
+		return;
+	}
+	transparencyCapture_.pending = false;
+
+	try {
+		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		if (!renderer) {
+			return;
+		}
+		auto& rendererData = renderer->GetRuntimeData();
+		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
+		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
+		if (!context || !mainTarget.texture) {
+			return;
+		}
+
+		D3D11_TEXTURE2D_DESC description{};
+		mainTarget.texture->GetDesc(&description);
+		if (description.Width != transparencyCapture_.width ||
+			description.Height != transparencyCapture_.height ||
+			description.Format != transparencyCapture_.format ||
+			description.SampleDesc.Count != 1) {
+			return;
+		}
+
+		context->CopyResource(transparencyCapture_.after.resource.Get(), mainTarget.texture);
+		transparencyCapture_.valid = true;
+		if (!loggedTransparencyCapture_) {
+			loggedTransparencyCapture_ = true;
+			spdlog::info(
+				"Transparency pass snapshots captured ({}x{}, format {})",
+				description.Width,
+				description.Height,
+				static_cast<std::uint32_t>(description.Format));
+		}
+	} catch (...) {
+		transparencyCapture_.valid = false;
+		if (!loggedTransparencyCaptureFailure_) {
+			loggedTransparencyCaptureFailure_ = true;
+			spdlog::warn("Transparency diagnostic capture failed after the transparency pass");
+		}
+	}
+}
+
 void CDoF::DoFRenderer::ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget)
 {
 	std::scoped_lock lock(mutex_);
@@ -1169,6 +1309,13 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				elapsed.count());
 			return;
 		}
+		const auto transparencyDiagnosticValid =
+			transparencyCapture_.valid &&
+			transparencyCapture_.width == inputDescription.Width &&
+			transparencyCapture_.height == inputDescription.Height &&
+			transparencyCapture_.format == inputDescription.Format &&
+			transparencyCapture_.before.srv && transparencyCapture_.after.srv;
+		transparencyCapture_.valid = transparencyDiagnosticValid;
 		ID3D11RenderTargetView* restoreRTV = currentRTV.Get();
 		OutputMergerRestore restore{ context, restoreRTV, currentDSV.Get() };
 		context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -1224,6 +1371,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 			inputDescription.Height,
 			renderArea.left,
 			renderArea.top);
+		transparencyCapture_.valid = false;
 		const D3D11_BOX outputBox{
 			0U,
 			0U,
@@ -1306,8 +1454,8 @@ void CDoF::DoFRenderer::Dispatch(
 		.keepSkySharp = a_settings.keepSkySharp ? 1U : 0U,
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
-		.padding4 = 0U,
-		.padding5 = 0U
+		.transparencyDiagnosticEnabled = transparencyCapture_.valid ? 1U : 0U,
+		.transparencyDeltaThreshold = 0.00025F
 	};
 	const SharedConstants sharedData{
 		.cameraData = GetCameraData(),
@@ -1335,7 +1483,7 @@ void CDoF::DoFRenderer::Dispatch(
 	a_context->CSSetConstantBuffers(5, 1, &sharedCB);
 	a_context->CSSetSamplers(0, 1, &sampler);
 
-	std::array<ID3D11ShaderResourceView*, 12> srvs{};
+	std::array<ID3D11ShaderResourceView*, 14> srvs{};
 	std::array<ID3D11UnorderedAccessView*, 3> uavs{};
 	const auto resetViews = [&]() {
 		srvs.fill(nullptr);
@@ -1496,6 +1644,10 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[3] = resources_.coc.srv.Get();
 	srvs[7] = resources_.postSmooth2.srv.Get();
 	srvs[11] = a_skyMaskDepth;
+	if (transparencyCapture_.valid) {
+		srvs[12] = transparencyCapture_.before.srv.Get();
+		srvs[13] = transparencyCapture_.after.srv.Get();
+	}
 	uavs[0] = resources_.output.uav.Get();
 	bindAndDispatch(shaders_.postSmoothing2AndFocusing.Get(), fullWidth, fullHeight);
 	resetViews();

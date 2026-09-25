@@ -3,6 +3,8 @@
 #include "HotkeyInput.h"
 #include "Settings.h"
 
+#include <detours.h>
+
 namespace
 {
 	std::atomic_bool firstMainPathLogged{ false };
@@ -42,6 +44,45 @@ namespace
 		static inline REL::Relocation<decltype(Thunk)> function;
 	};
 
+	struct RenderTransparencyHook
+	{
+		using Function = void (*)(RE::BSShaderAccumulator*, std::uint32_t);
+
+		static void Thunk(RE::BSShaderAccumulator* a_accumulator, std::uint32_t a_renderFlags)
+		{
+			auto& renderer = CDoF::DoFRenderer::GetSingleton();
+			renderer.CaptureTransparencyBefore();
+			function(a_accumulator, a_renderFlags);
+			renderer.CaptureTransparencyAfter();
+		}
+
+		static inline Function function{};
+	};
+
+	bool InstallTransparencyHook()
+	{
+		REL::Relocation<std::uintptr_t> renderTransparency{ REL::RelocationID(99940, 106585) };
+		RenderTransparencyHook::function = reinterpret_cast<RenderTransparencyHook::Function>(
+			renderTransparency.address());
+
+		if (DetourTransactionBegin() != NO_ERROR) {
+			return false;
+		}
+		if (DetourUpdateThread(GetCurrentThread()) != NO_ERROR ||
+			DetourAttach(
+				reinterpret_cast<PVOID*>(std::addressof(RenderTransparencyHook::function)),
+				reinterpret_cast<PVOID>(RenderTransparencyHook::Thunk)) != NO_ERROR) {
+			DetourTransactionAbort();
+			return false;
+		}
+		if (DetourTransactionCommit() != NO_ERROR) {
+			return false;
+		}
+
+		spdlog::info("Installed transparency-pass diagnostic hook at 0x{:X}", renderTransparency.address());
+		return true;
+	}
+
 	void InstallHooks()
 	{
 		static std::atomic_bool installed{ false };
@@ -58,6 +99,9 @@ namespace
 			MainPostProcessingHook::Thunk);
 
 		spdlog::info("Installed main post-processing hook at 0x{:X}", mainPostProcessing.address());
+		if (!InstallTransparencyHook()) {
+			spdlog::critical("Failed to install transparency-pass diagnostic hook");
+		}
 	}
 
 	void MessageHandler(SKSE::MessagingInterface::Message* a_message)

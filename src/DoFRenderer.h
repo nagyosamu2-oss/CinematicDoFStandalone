@@ -15,6 +15,8 @@ namespace CDoF
 		void SetTargetFocus(
 			TargetFocusSettings a_settings,
 			Settings a_dialogueLensSettings);
+		void CaptureTransparencyBefore();
+		void CaptureTransparencyAfter();
 		void ApplyBeforePostProcessing();
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
 
@@ -75,6 +77,18 @@ namespace CDoF
 			ComPtr<ID3D11SamplerState> linearSampler;
 		};
 
+		struct TransparencyCapture
+		{
+			ID3D11Device* device{};
+			std::uint32_t width{};
+			std::uint32_t height{};
+			DXGI_FORMAT format{ DXGI_FORMAT_UNKNOWN };
+			Texture before;
+			Texture after;
+			bool pending{ false };
+			bool valid{ false };
+		};
+
 		struct Shaders
 		{
 			ComPtr<ID3D11ComputeShader> updateFocus;
@@ -111,6 +125,9 @@ namespace CDoF
 			std::uint32_t a_renderHeight);
 		bool CompileShaders(ID3D11Device* a_device);
 		bool CreateTexture(ID3D11Device* a_device, Texture& a_texture, DXGI_FORMAT a_format, std::uint32_t a_width, std::uint32_t a_height);
+		bool EnsureTransparencyCapture(
+			ID3D11Device* a_device,
+			const D3D11_TEXTURE2D_DESC& a_sourceDescription);
 		bool CreateConstantBuffer(ID3D11Device* a_device, std::uint32_t a_size, ComPtr<ID3D11Buffer>& a_buffer);
 		bool UpdateConstantBuffer(ID3D11DeviceContext* a_context, ID3D11Buffer* a_buffer, const void* a_data, std::uint32_t a_size);
 		void Dispatch(
@@ -158,6 +175,7 @@ namespace CDoF
 		TargetFocusSettings targetFocusSettings_{};
 		Settings dialogueLensSettings_{};
 		Resources resources_{};
+		TransparencyCapture transparencyCapture_{};
 		Shaders shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
 		ID3D11Device* shaderDevice_{};
@@ -179,6 +197,8 @@ namespace CDoF
 		bool loggedTargetNearFocusAssist_{ false };
 		bool loggedRenderAreaDiagnostics_{ false };
 		bool dialogueOnlyPrewarmed_{ false };
+		bool loggedTransparencyCapture_{ false };
+		bool loggedTransparencyCaptureFailure_{ false };
 		TargetFocusMode targetFocusMode_{ TargetFocusMode::kNone };
 		std::mutex mutex_;
 	};

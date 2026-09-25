@@ -133,6 +133,8 @@ Texture2D<float4> TexFarGatherColor1 : register(t8);
 Texture2D<float4> TexFarGatherColor2 : register(t9);
 Texture2D<float4> TexFarGatherColor3 : register(t10);
 Texture2D<float> SkyMaskDepthTexture : register(t11);
+Texture2D<float4> TransparencyBeforeTexture : register(t12);
+Texture2D<float4> TransparencyAfterTexture : register(t13);
 
 cbuffer DoFCB : register(b1)
 {
@@ -165,7 +167,8 @@ cbuffer DoFCB : register(b1)
 	float HeadGuardRadius;
 	uint KeepSkySharp;
 	float2 TargetGuardAxis;
-	uint2 pad4;
+	uint TransparencyDiagnosticEnabled;
+	float TransparencyDeltaThreshold;
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -1302,6 +1305,22 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	// softening a moon pixel whose CoC was deliberately set to zero.
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
+
+	// Diagnostic Test5: this is intentionally a visualization only. It marks
+	// pixels whose scene colour changed during Skyrim's transparency pass. Unlike
+	// the earlier depth-neighbour experiments, the signal does not depend on the
+	// focus plane or F-number and therefore tests whether veil/hair pixels can be
+	// identified by a genuine second renderer signal.
+	if (TransparencyDiagnosticEnabled != 0)
+	{
+		uint2 inputPixel = GetInputPixel(DTid);
+		float3 beforeColor = TransparencyBeforeTexture[inputPixel].rgb;
+		float3 afterColor = TransparencyAfterTexture[inputPixel].rgb;
+		float3 difference = abs(afterColor - beforeColor);
+		float transparencySignal = max(difference.r, max(difference.g, difference.b));
+		float diagnosticMask = step(TransparencyDeltaThreshold, transparencySignal);
+		color.rgb = lerp(color.rgb, float3(1.0f, 0.0f, 1.0f), diagnosticMask);
+	}
 
 	RWTexOut[DTid] = float4(color.rgb, 1.0f);
 }

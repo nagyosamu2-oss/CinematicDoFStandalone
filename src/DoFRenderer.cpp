@@ -1018,9 +1018,9 @@ void CDoF::DoFRenderer::RecordTransparencyCall(
 
 void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
 {
-	// Test16 keeps the proven interior call but selects the distinct exterior
-	// signature observed by Test12.  Reject unrelated hot-path calls before
-	// taking the renderer mutex.
+	// Test17 keeps the proven interior call and advances the exterior Test16
+	// selector from the first to the second flags=0x0C call observed per frame.
+	// Reject unrelated hot-path calls before taking the renderer mutex.
 	if (a_renderFlags != kInteriorTransparencyRenderFlags &&
 		a_renderFlags != kExteriorTransparencyRenderFlags) {
 		return;
@@ -1040,7 +1040,16 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 	const auto interior = cell->IsInteriorCell();
 	const auto selectedRenderFlags = interior ?
 		kInteriorTransparencyRenderFlags : kExteriorTransparencyRenderFlags;
-	if (a_renderFlags != selectedRenderFlags || transparencyCapture_.pending ||
+	if (a_renderFlags != selectedRenderFlags) {
+		return;
+	}
+	if (!interior) {
+		++transparencyExteriorCandidateCallCount_;
+		if (transparencyExteriorCandidateCallCount_ != 2U) {
+			return;
+		}
+	}
+	if (transparencyCapture_.pending ||
 		transparencyCapture_.valid) {
 		return;
 	}
@@ -1063,7 +1072,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!EnsureTransparencyCapture(device, description)) {
 			if (!loggedSelectedTransparencyCaptureFailure_) {
 				loggedSelectedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Test16 transparency capture is unavailable for the main target");
+				spdlog::warn("Test17 transparency capture is unavailable for the main target");
 			}
 			return;
 		}
@@ -1081,7 +1090,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
 			spdlog::warn(
-				"Test16 transparency capture failed before {} flags=0x{:02X}",
+				"Test17 transparency capture failed before {} flags=0x{:02X}",
 				interior ? "INTERIOR" : "EXTERIOR",
 				selectedRenderFlags);
 		}
@@ -1127,7 +1136,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		if (!loggedSelectedTransparencyCapture_) {
 			loggedSelectedTransparencyCapture_ = true;
 			spdlog::info(
-				"Test16 captured cell-aware transparency snapshots (texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				"Test17 captured transparency snapshots (interior flags=0x45, exterior second flags=0x0C; texture {}x{}, active region ({}, {}) {}x{}, format {})",
 				description.Width,
 				description.Height,
 				renderArea.left,
@@ -1140,7 +1149,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		transparencyCapture_.valid = false;
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test16 transparency capture failed after the selected cell-aware call");
+			spdlog::warn("Test17 transparency capture failed after the selected call");
 		}
 	}
 }
@@ -1206,6 +1215,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 	transparencyCallCount_ = 0;
 	transparencyCallOverflowCount_ = 0;
 	transparencyNullAccumulatorCount_ = 0;
+	transparencyExteriorCandidateCallCount_ = 0;
 	// Silhouette colors are display-space choices.  Apply them only after the
 	// game's image-space pass so exposure, tonemapping, and color grading cannot
 	// tint an exact white/black palette.  Normal DoF remains on this HDR-side path.
@@ -1479,7 +1489,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test16 cell-aware transparency signature bands activated (interior=0x45, exterior=0x0C; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
+				"Test17 second exterior transparency-call bands activated (interior=0x45, exterior=second 0x0C; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],

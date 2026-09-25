@@ -1431,10 +1431,9 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test16: retain Test15's delta bands while the native side selects
-	// flags=0x45 indoors and flags=0x0C outdoors. This makes it immediately visible
-	// whether the exterior-only signature removes the large sky/terrain update yet
-	// still contains the transparent veil.
+	// Diagnostic Test17: retain Test15's delta bands while the native side selects
+	// flags=0x45 indoors and the second flags=0x0C call outdoors. Test16 proved that
+	// the first exterior 0x0C call has no visible delta.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);

@@ -204,6 +204,7 @@ namespace CDoF
 		std::uint32_t transparencyCallCount_{};
 		std::uint32_t transparencyCallOverflowCount_{};
 		std::uint32_t transparencyNullAccumulatorCount_{};
+		std::uint32_t transparencyExteriorCandidateCallCount_{};
 		std::uint32_t transparencyStableLocationFrames_{};
 		bool transparencyLocationInitialized_{ false };
 		bool transparencyPreviousLocationInterior_{ false };

@@ -1431,16 +1431,25 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test14: cyan is a transparency-pass change that also lies in the
-	// expanded player capsule. Unselected transparency remains normally coloured,
-	// making it easy to see whether foliage is rejected and the veil train survives.
+	// Diagnostic Test15: classify the transparency-pass delta inside the expanded
+	// player capsule. The opaque-outfit control from Test14 showed a low-level
+	// background delta throughout the capsule, so colour bands reveal whether the
+	// veil produces a separable stronger signal before choosing a production cutoff.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);
-		bool hasTransparencySignal = transparencySignal >= TransparencyDeltaThreshold;
 		float subjectGate = GetTransparencySubjectGate(uv);
-		if (hasTransparencySignal && subjectGate > 0.5f)
-			color.rgb = float3(0.0f, 1.0f, 1.0f);
+		if (subjectGate > 0.5f && transparencySignal >= TransparencyDeltaThreshold)
+		{
+			if (transparencySignal >= 0.10f)
+				color.rgb = float3(1.0f, 1.0f, 1.0f); // very strong
+			else if (transparencySignal >= 0.02f)
+				color.rgb = float3(1.0f, 0.0f, 1.0f); // strong
+			else if (transparencySignal >= 0.002f)
+				color.rgb = float3(1.0f, 1.0f, 0.0f); // medium
+			else
+				color.rgb = float3(0.0f, 1.0f, 1.0f); // weak / background floor
+		}
 	}
 
 	RWTexOut[DTid] = float4(color.rgb, 1.0f);

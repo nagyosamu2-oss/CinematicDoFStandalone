@@ -1459,7 +1459,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test14 player transparency gate activated (centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
+				"Test15 transparency delta bands activated (centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],

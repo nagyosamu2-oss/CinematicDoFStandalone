@@ -347,7 +347,7 @@ bool CDoF::DoFRenderer::CompileShaders(ID3D11Device* a_device)
 			return false;
 		}
 	}
-	spdlog::info("Compiled all 15 depth-of-field compute passes (near balanced-perimeter kernel v15)");
+	spdlog::info("Compiled all 15 depth-of-field compute passes (foreground depth-boundary test 1)");
 	return true;
 }
 

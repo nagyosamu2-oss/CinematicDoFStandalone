@@ -265,6 +265,16 @@ float GetDepth(float2 uv)
 	return max(depth, 1e-6);
 }
 
+float GetDepthAtRenderPixel(uint2 renderPixel)
+{
+	// Read the exact source texel for boundary classification. A filtered depth
+	// sample would manufacture intermediate depths precisely where this test needs
+	// to distinguish a focused foreground edge from the background behind it.
+	float depth = DepthTexture[GetInputPixel(renderPixel)];
+	depth = SharedData::GetScreenDepth(depth) * GAME_UNIT_TO_M * 0.001f;  // in KM
+	return max(depth, 1e-6f);
+}
+
 float GetSkyClearDepthMask(uint2 renderPixel)
 {
 	// Skyrim clears the conventional depth buffer to exactly 1.0. Geometry writes
@@ -554,9 +564,8 @@ float3 BlendSoftApertureHighlight(
 	return lerp(blurredColor, max(blurredColor, highlightMean), highlightBlend);
 }
 
-float CalculateBlurDiscSize(FocusInfo focusInfo)
+float CalculateBlurDiscSizeForDepth(FocusInfo focusInfo, float pixelDepth)
 {
-	float pixelDepth = GetDepth(focusInfo.texcoord);
 	float pixelDepthInM = pixelDepth * 1000.0;  // in meter
 	float signedFocusDistance = pixelDepthInM - focusInfo.focusDepthInM;
 	float addedFocusRange = signedFocusDistance < 0.0f ? NearFocusRangeMeters : FarFocusRangeMeters;
@@ -583,6 +592,50 @@ float CalculateBlurDiscSize(FocusInfo focusInfo)
 	                (abs(pixelDepthInM - focusInfo.focusDepthInM) / (pixelDepthInM + (pixelDepthInM == 0)));
 	float toReturn = max(abs(cocInMM) * SENSOR_SIZE, 0);  // divide by sensor size to get coc in % of screen (or better: in sampler units)
 	return signedFocusDistance < 0.0f ? -toReturn : toReturn;
+}
+
+float CalculateBlurDiscSize(FocusInfo focusInfo)
+{
+	return CalculateBlurDiscSizeForDepth(focusInfo, GetDepth(focusInfo.texcoord));
+}
+
+float RefineFarCoCAtFocusedBoundary(FocusInfo focusInfo, uint2 renderPixel, float centreCoC)
+{
+	// Test 1: protect only the far/background side of a discontinuity. If one of
+	// the four immediately adjacent texels is nearer and has a smaller CoC, use
+	// that CoC for the boundary pixel. This is deliberately limited to one pixel;
+	// it runs before tiling and blur, and does not alter the existing actor guard.
+	if (centreCoC <= 0.0f)
+		return centreCoC;
+
+	float centreDepth = GetDepthAtRenderPixel(renderPixel);
+	float bestDepth = centreDepth;
+	float bestCoC = centreCoC;
+	static const int2 offsets[4] = {
+		int2(-1, 0),
+		int2(1, 0),
+		int2(0, -1),
+		int2(0, 1)
+	};
+
+	[unroll]
+	for (int i = 0; i < 4; ++i) {
+		uint2 samplePixel = ClampFullResolutionPixel(int2(renderPixel) + offsets[i]);
+		float sampleDepth = GetDepthAtRenderPixel(samplePixel);
+		float sampleCoC = CalculateBlurDiscSizeForDepth(focusInfo, sampleDepth);
+
+		// A minimum separation avoids reacting to depth quantisation on a flat
+		// surface. The CoC comparison restricts the correction to a genuinely
+		// sharper foreground neighbour rather than spreading arbitrary geometry.
+		bool isNearer = sampleDepth * 1000.0f + 0.02f < centreDepth * 1000.0f;
+		bool isSharper = abs(sampleCoC) + 1e-6f < abs(bestCoC);
+		if (isNearer && isSharper && sampleDepth < bestDepth) {
+			bestDepth = sampleDepth;
+			bestCoC = sampleCoC;
+		}
+	}
+
+	return bestCoC;
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -823,6 +876,7 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	FillFocusInfoData(focusInfo);
 
 	float coc = CalculateBlurDiscSize(focusInfo);
+	coc = RefineFarCoCAtFocusedBoundary(focusInfo, DTid, coc);
 	// Keep only the interior of the clear-depth sky outside the blur. Pixels close
 	// to depth-writing geometry retain progressively more of the normal CoC so the
 	// boundary does not become a hard cut-out.

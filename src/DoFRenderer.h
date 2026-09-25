@@ -180,6 +180,8 @@ namespace CDoF
 		Settings dialogueLensSettings_{};
 		Resources resources_{};
 		TransparencyCapture transparencyCapture_{};
+		std::uint32_t transparencyCallIndex_{};
+		std::uint32_t maximumTransparencyCallsObserved_{};
 		Shaders shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
 		ID3D11Device* shaderDevice_{};
@@ -203,6 +205,7 @@ namespace CDoF
 		bool dialogueOnlyPrewarmed_{ false };
 		bool loggedTransparencyCapture_{ false };
 		bool loggedTransparencyCaptureFailure_{ false };
+		bool loggedTransparencyPassSelection_{ false };
 		TargetFocusMode targetFocusMode_{ TargetFocusMode::kNone };
 		std::mutex mutex_;
 	};

@@ -191,6 +191,21 @@ namespace
 	constexpr float kGameUnitToMeters = 0.01428F;
 	constexpr float kCommunityShadersActorNearFocusMinimumMeters = 0.17F;
 	constexpr float kStandaloneNearFocusMinimumMeters = 0.15F;
+	constexpr auto kTransparencyDiagnosticPath =
+		L"Data\\SKSE\\Plugins\\CinematicDoFStandalone-TransparencyTest11.ini";
+
+	std::uint32_t GetTransparencyDiagnosticPassIndex()
+	{
+		static const auto passIndex = std::clamp(
+			GetPrivateProfileIntW(
+				L"TransparencyDiagnostic",
+				L"PassIndex",
+				1,
+				kTransparencyDiagnosticPath),
+			1U,
+			32U);
+		return passIndex;
+	}
 
 	RE::NiCamera* FindActiveNiCamera(RE::NiAVObject* a_object)
 	{
@@ -957,12 +972,14 @@ void CDoF::DoFRenderer::CaptureTransparencyBefore()
 		return;
 	}
 
-	// Diagnostic Test10: one frame can enter the engine transparency routine
-	// more than once (for example for another accumulator/view).  Test8/9
-	// replaced the snapshots on every entry, so the final pair did not
-	// necessarily describe the first/main transparency pass.  Keep the first
-	// completed pair until Render() consumes it at the post-processing boundary.
+	// Diagnostic Test11: one frame can enter the engine transparency routine
+	// more than once for different accumulators/views. Select one ordinal so the
+	// interior and exterior calls can be identified without rebuilding the DLL.
+	const auto currentPassIndex = ++transparencyCallIndex_;
 	if (transparencyCapture_.pending || transparencyCapture_.valid) {
+		return;
+	}
+	if (currentPassIndex != GetTransparencyDiagnosticPassIndex()) {
 		return;
 	}
 
@@ -1045,7 +1062,8 @@ void CDoF::DoFRenderer::CaptureTransparencyAfter()
 		if (!loggedTransparencyCapture_) {
 			loggedTransparencyCapture_ = true;
 			spdlog::info(
-				"Transparency pass snapshots captured (texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				"Transparency pass {} snapshots captured (texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				GetTransparencyDiagnosticPassIndex(),
 				description.Width,
 				description.Height,
 				renderArea.left,
@@ -1075,6 +1093,22 @@ void CDoF::DoFRenderer::ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarge
 void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 {
 	std::scoped_lock lock(mutex_);
+	if (!loggedTransparencyPassSelection_) {
+		loggedTransparencyPassSelection_ = true;
+		spdlog::info(
+			"Transparency diagnostic Test11 selected pass index {} (change the dedicated INI and restart the game to select another pass)",
+			GetTransparencyDiagnosticPassIndex());
+	}
+	if (transparencyCallIndex_ > maximumTransparencyCallsObserved_) {
+		maximumTransparencyCallsObserved_ = transparencyCallIndex_;
+		spdlog::info(
+			"Transparency diagnostic Test11 observed a new maximum of {} transparency call(s) before one post-processing frame",
+			maximumTransparencyCallsObserved_);
+	}
+	// The post-processing boundary consumes the selected pair and starts the
+	// ordinal count for the next frame. Keep the captured textures valid until
+	// Dispatch() below has sampled them.
+	transparencyCallIndex_ = 0;
 	// Silhouette colors are display-space choices.  Apply them only after the
 	// game's image-space pass so exposure, tonemapping, and color grading cannot
 	// tint an exact white/black palette.  Normal DoF remains on this HDR-side path.

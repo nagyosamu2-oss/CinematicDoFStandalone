@@ -16,6 +16,8 @@ namespace CDoF
 			TargetFocusSettings a_settings,
 			Settings a_dialogueLensSettings);
 		void RecordTransparencyCall(RE::BSShaderAccumulator* a_accumulator, std::uint32_t a_renderFlags);
+		void CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags);
+		void CaptureSelectedTransparencyAfter();
 		void ApplyBeforePostProcessing();
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
 
@@ -206,6 +208,8 @@ namespace CDoF
 		bool transparencyPreviousLocationInterior_{ false };
 		bool loggedInteriorTransparencySignatures_{ false };
 		bool loggedExteriorTransparencySignatures_{ false };
+		bool loggedSelectedTransparencyCapture_{ false };
+		bool loggedSelectedTransparencyCaptureFailure_{ false };
 		Shaders shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
 		ID3D11Device* shaderDevice_{};

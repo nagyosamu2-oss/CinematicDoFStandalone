@@ -191,6 +191,7 @@ namespace
 	constexpr float kGameUnitToMeters = 0.01428F;
 	constexpr float kCommunityShadersActorNearFocusMinimumMeters = 0.17F;
 	constexpr float kStandaloneNearFocusMinimumMeters = 0.15F;
+	constexpr std::uint32_t kMainTransparencyRenderFlags = 0x45U;
 
 	RE::NiCamera* FindActiveNiCamera(RE::NiAVObject* a_object)
 	{
@@ -1007,6 +1008,116 @@ void CDoF::DoFRenderer::RecordTransparencyCall(
 		.drawDecals = runtimeData->drawDecals,
 		.multipleAccumulators = false
 	};
+}
+
+void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
+{
+	std::scoped_lock lock(mutex_);
+	if (!settings_.enabled || silhouetteSettings_.enabled || permanentlyDisabled_) {
+		transparencyCapture_.pending = false;
+		transparencyCapture_.valid = false;
+		return;
+	}
+	if (a_renderFlags != kMainTransparencyRenderFlags ||
+		transparencyCapture_.pending || transparencyCapture_.valid) {
+		return;
+	}
+
+	try {
+		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		if (!renderer) {
+			return;
+		}
+		auto& rendererData = renderer->GetRuntimeData();
+		auto device = reinterpret_cast<ID3D11Device*>(rendererData.forwarder);
+		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
+		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
+		if (!device || !context || !mainTarget.texture) {
+			return;
+		}
+
+		D3D11_TEXTURE2D_DESC description{};
+		mainTarget.texture->GetDesc(&description);
+		if (!EnsureTransparencyCapture(device, description)) {
+			if (!loggedSelectedTransparencyCaptureFailure_) {
+				loggedSelectedTransparencyCaptureFailure_ = true;
+				spdlog::warn("Test13 transparency capture is unavailable for the main target");
+			}
+			return;
+		}
+		const auto renderArea = GetActiveRenderArea(context, description);
+		transparencyCapture_.renderLeft = renderArea.left;
+		transparencyCapture_.renderTop = renderArea.top;
+		transparencyCapture_.renderWidth = renderArea.width;
+		transparencyCapture_.renderHeight = renderArea.height;
+
+		context->CopyResource(transparencyCapture_.before.resource.Get(), mainTarget.texture);
+		transparencyCapture_.pending = true;
+	} catch (...) {
+		transparencyCapture_.pending = false;
+		transparencyCapture_.valid = false;
+		if (!loggedSelectedTransparencyCaptureFailure_) {
+			loggedSelectedTransparencyCaptureFailure_ = true;
+			spdlog::warn("Test13 transparency capture failed before flags=0x45");
+		}
+	}
+}
+
+void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
+{
+	std::scoped_lock lock(mutex_);
+	if (!transparencyCapture_.pending) {
+		return;
+	}
+	transparencyCapture_.pending = false;
+
+	try {
+		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+		if (!renderer) {
+			return;
+		}
+		auto& rendererData = renderer->GetRuntimeData();
+		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
+		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
+		if (!context || !mainTarget.texture) {
+			return;
+		}
+
+		D3D11_TEXTURE2D_DESC description{};
+		mainTarget.texture->GetDesc(&description);
+		const auto renderArea = GetActiveRenderArea(context, description);
+		if (description.Width != transparencyCapture_.width ||
+			description.Height != transparencyCapture_.height ||
+			description.Format != transparencyCapture_.format ||
+			description.SampleDesc.Count != 1 ||
+			renderArea.left != transparencyCapture_.renderLeft ||
+			renderArea.top != transparencyCapture_.renderTop ||
+			renderArea.width != transparencyCapture_.renderWidth ||
+			renderArea.height != transparencyCapture_.renderHeight) {
+			return;
+		}
+
+		context->CopyResource(transparencyCapture_.after.resource.Get(), mainTarget.texture);
+		transparencyCapture_.valid = true;
+		if (!loggedSelectedTransparencyCapture_) {
+			loggedSelectedTransparencyCapture_ = true;
+			spdlog::info(
+				"Test13 captured transparency snapshots for flags=0x45 (texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				description.Width,
+				description.Height,
+				renderArea.left,
+				renderArea.top,
+				renderArea.width,
+				renderArea.height,
+				static_cast<std::uint32_t>(description.Format));
+		}
+	} catch (...) {
+		transparencyCapture_.valid = false;
+		if (!loggedSelectedTransparencyCaptureFailure_) {
+			loggedSelectedTransparencyCaptureFailure_ = true;
+			spdlog::warn("Test13 transparency capture failed after flags=0x45");
+		}
+	}
 }
 
 void CDoF::DoFRenderer::ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget)

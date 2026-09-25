@@ -52,7 +52,9 @@ namespace
 		{
 			auto& renderer = CDoF::DoFRenderer::GetSingleton();
 			renderer.RecordTransparencyCall(a_accumulator, a_renderFlags);
+			renderer.CaptureSelectedTransparencyBefore(a_renderFlags);
 			function(a_accumulator, a_renderFlags);
+			renderer.CaptureSelectedTransparencyAfter();
 		}
 
 		static inline Function function{};

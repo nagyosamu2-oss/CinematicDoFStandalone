@@ -740,6 +740,25 @@ float CalculateSampleWeight(float sampleRadiusInCoC, float ringDistanceInCoC)
 	return saturate(sampleRadiusInCoC - (ringDistanceInCoC * NearFarDistanceCompensation) + 0.5);
 }
 
+float CalculateFarPlaneCoCCompatibility(float centreCoC, float sampleCoC)
+{
+	// Keep smoothly varying background depth continuous, but suppress taps that
+	// belong to a substantially different focus layer. Using a relative delta
+	// makes the test independent of the selected aperture and maximum blur.
+	float scale = max(max(abs(centreCoC), abs(sampleCoC)), 1e-4f);
+	float relativeDifference = abs(sampleCoC - centreCoC) / scale;
+	return 1.0f - smoothstep(0.35f, 0.85f, relativeDifference);
+}
+
+float CalculateNearPlaneCoCCompatibility(float originalSampleCoC)
+{
+	// The dilated near layer must spread foreground colour over the far layer,
+	// but it should not gather colour from pixels that are themselves on the far
+	// side of focus. Keep in-focus and negative-CoC taps; fade out positive CoC
+	// over a few full-resolution pixels to avoid a binary temporal edge.
+	return 1.0f - smoothstep(blurPixelSizeLength, blurPixelSizeLength * 6.0f, originalSampleCoC);
+}
+
 float2 MorphPointOffsetWithAnamorphicDeltas(float2 pointOffset, float4 anamorphicFactors, float2x2 anamorphicRotationMatrix)
 {
 	pointOffset.x = pointOffset.x * anamorphicFactors.x + pointOffset.x * anamorphicFactors.z;
@@ -1062,6 +1081,7 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			float sampleRadius = TexCoCInput.SampleLevel(LinearSampler, fullResolutionTap, 0).r;
 			float4 tap = 0;
 			float weight = (sampleRadius >= 0) * ringWeight * CalculateSampleWeight(sampleRadius * FarPlaneMaxBlur, ringDistance);
+			weight *= CalculateFarPlaneCoCCompatibility(colorRadius, sampleRadius);
 			// adjust the weight for samples which are in front of the fragment, as they have to get their weight boosted so we don't see edges bleeding through.
 			// as otherwise they'll get a weight that's too low relatively to the pixels sampled from the plane the fragment is in.The 3.0 value is empirically determined.
 			weight *= (1.0 + min(FarPlaneMaxBlur, 3.0f) * saturate(colorRadius - sampleRadius));
@@ -1080,6 +1100,14 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		}
 		pointsOnRing += pointsFirstRing;
 		currentRingRadiusCoords += ringRadiusDeltaCoords;
+	}
+	// A dilated near-CoC footprint can occasionally reach a pixel whose entire
+	// gather disk belongs to the far plane. Do not turn that rejected gather into
+	// a black translucent fringe; leave the near layer empty at that pixel.
+	if (average.w <= 1e-5f) {
+		color.a = 0.0f;
+		RWTexOut[DTid] = color;
+		return;
 	}
 	float inverseWeight = rcp(average.w + (average.w == 0));
 	color.rgb = average.rgb * inverseWeight;
@@ -1119,11 +1147,15 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float pointsFirstRing = 7;
 	// luma is stored in alpha
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
-	float4 average = float4(color.rgb * colorRadiusToUse * bokehBusyFactorToUse, bokehBusyFactorToUse);
+	float centreCompatibility = CalculateNearPlaneCoCCompatibility(colorRadii.g);
+	float4 average = float4(
+		color.rgb * colorRadiusToUse * bokehBusyFactorToUse * centreCompatibility,
+		bokehBusyFactorToUse * centreCompatibility);
 	// Include the centre sample in the highlight estimate. The previous near path
 	// only inspected the concentric rings, so a small highlight at the centre of
 	// its own blur could be weaker than the outline surrounding it.
-	float centerApertureHighlightWeight = CalculateNearApertureHighlightWeight(color.rgb, colorRadiusToUse);
+	float centerApertureHighlightWeight =
+		CalculateNearApertureHighlightWeight(color.rgb, colorRadiusToUse) * centreCompatibility;
 	if (centerApertureHighlightWeight > 0.0f)
 		centerApertureHighlightWeight *= GetSkyHighlightEligibility(blurInfo.texcoord);
 	float3 apertureHighlightSum = color.rgb * centerApertureHighlightWeight;
@@ -1153,22 +1185,22 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			float2 fullResolutionTap = ClampFullResolutionUV(tapCoords);
 			float2 halfResolutionTap = ClampHalfResolutionUV(tapCoords);
 			float4 tap = TexColor.SampleLevel(LinearSampler, halfResolutionTap, 0);
+			// r contains blurred CoC, g contains original CoC. Original can be negative.
+			float2 sampleRadii = float2(
+				TexCoCBlurredInput.SampleLevel(LinearSampler, halfResolutionTap, 0),
+				TexCoCInput.SampleLevel(LinearSampler, fullResolutionTap, 0));
+			float sampleWeight = weight * CalculateNearPlaneCoCCompatibility(sampleRadii.g);
 			float apertureHighlightWeight = CalculateNearApertureHighlightWeight(tap.rgb, colorRadiusToUse);
 			if (apertureHighlightWeight > 0.0f)
 				apertureHighlightWeight *= GetSkyHighlightEligibility(fullResolutionTap);
-			float weightedHighlight = apertureHighlightWeight * weight;
+			float weightedHighlight = apertureHighlightWeight * sampleWeight;
 			apertureHighlightSum += tap.rgb * weightedHighlight;
 			apertureHighlightWeightSum += weightedHighlight;
 			float weightedRimHighlight = weightedHighlight * apertureRimFactor;
 			apertureHighlightRimSum += tap.rgb * weightedRimHighlight;
 			apertureHighlightRimWeightSum += weightedRimHighlight;
-			// r contains blurred CoC, g contains original CoC. Original can be negative
-			float2 sampleRadii = float2(
-				TexCoCBlurredInput.SampleLevel(LinearSampler, halfResolutionTap, 0),
-				TexCoCInput.SampleLevel(LinearSampler, fullResolutionTap, 0));
-			float blurredSampleRadius = sampleRadii.r;
-			average.rgb += tap.rgb * weight;
-			average.w += weight;
+			average.rgb += tap.rgb * sampleWeight;
+			average.w += sampleWeight;
 			angle += anglePerPoint;
 		}
 		pointsOnRing += pointsFirstRing;

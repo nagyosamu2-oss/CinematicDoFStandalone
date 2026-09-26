@@ -647,7 +647,7 @@ float RefineFarCoCAtFocusedBoundary(FocusInfo focusInfo, uint2 renderPixel, floa
 	return bestCoC;
 }
 
-float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
+uint2 GetTransparencyCapturePixel(uint2 renderPixel)
 {
 	// Transparency is captured before Community Shaders performs temporal
 	// upscaling, while this diagnostic is composed after upscaling. The backing
@@ -661,11 +661,24 @@ float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
 	uint2 captureMinimum = uint2(TransparencyCaptureRegion.xy);
 	uint2 captureMaximum = captureMinimum +
 		max(uint2(1, 1), uint2(TransparencyCaptureRegion.zw)) - 1;
-	uint2 capturePixel = clamp(uint2(capturePosition), captureMinimum, captureMaximum);
+	return clamp(uint2(capturePosition), captureMinimum, captureMaximum);
+}
+
+float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
+{
+	uint2 capturePixel = GetTransparencyCapturePixel(renderPixel);
 	float3 beforeColor = TransparencyBeforeTexture[capturePixel].rgb;
 	float3 afterColor = TransparencyAfterTexture[capturePixel].rgb;
 	float3 difference = abs(afterColor - beforeColor);
 	return max(difference.r, max(difference.g, difference.b));
+}
+
+float GetTransparencyAlphaDeltaAtRenderPixel(uint2 renderPixel)
+{
+	uint2 capturePixel = GetTransparencyCapturePixel(renderPixel);
+	float beforeAlpha = TransparencyBeforeTexture[capturePixel].a;
+	float afterAlpha = TransparencyAfterTexture[capturePixel].a;
+	return abs(afterAlpha - beforeAlpha);
 }
 
 bool IsOpaqueNearerAnchor(uint2 samplePixel, float centreDepth, out float sampleDepth)
@@ -1431,23 +1444,28 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test17: retain Test15's delta bands while the native side selects
-	// flags=0x45 indoors and the second flags=0x0C call outdoors. Test16 proved that
-	// the first exterior 0x0C call has no visible delta.
+	// Diagnostic Test18: Test16 and Test17 ruled out both exterior flags=0x0C
+	// calls. The sole exterior flags=0x45 call changes the veil but also broad
+	// scenery, so classify whether the captured alpha channel provides an
+	// independent per-pixel signal. Green is RGB-only, red is alpha-only, yellow
+	// is both, and blue is neither. This remains visualization only.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
-		float transparencySignal = GetTransparencyDeltaAtRenderPixel(DTid);
 		float subjectGate = GetTransparencySubjectGate(uv);
-		if (subjectGate > 0.5f && transparencySignal >= TransparencyDeltaThreshold)
+		if (subjectGate > 0.5f)
 		{
-			if (transparencySignal >= 0.10f)
-				color.rgb = float3(1.0f, 1.0f, 1.0f); // very strong
-			else if (transparencySignal >= 0.02f)
-				color.rgb = float3(1.0f, 0.0f, 1.0f); // strong
-			else if (transparencySignal >= 0.002f)
-				color.rgb = float3(1.0f, 1.0f, 0.0f); // medium
+			bool hasRgbDelta =
+				GetTransparencyDeltaAtRenderPixel(DTid) >= TransparencyDeltaThreshold;
+			bool hasAlphaDelta =
+				GetTransparencyAlphaDeltaAtRenderPixel(DTid) >= TransparencyDeltaThreshold;
+			if (hasRgbDelta && hasAlphaDelta)
+				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: both
+			else if (hasRgbDelta)
+				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: RGB only
+			else if (hasAlphaDelta)
+				color.rgb = float3(1.0f, 0.0f, 0.0f); // red: alpha only
 			else
-				color.rgb = float3(0.0f, 1.0f, 1.0f); // weak / background floor
+				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: neither
 		}
 	}
 

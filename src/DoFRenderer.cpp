@@ -197,7 +197,6 @@ namespace
 	constexpr float kCommunityShadersActorNearFocusMinimumMeters = 0.17F;
 	constexpr float kStandaloneNearFocusMinimumMeters = 0.15F;
 	constexpr std::uint32_t kInteriorTransparencyRenderFlags = 0x45U;
-	constexpr std::uint32_t kExteriorTransparencyRenderFlags = 0x0CU;
 
 	RE::NiCamera* FindActiveNiCamera(RE::NiAVObject* a_object)
 	{
@@ -1018,11 +1017,10 @@ void CDoF::DoFRenderer::RecordTransparencyCall(
 
 void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
 {
-	// Test17 keeps the proven interior call and advances the exterior Test16
-	// selector from the first to the second flags=0x0C call observed per frame.
+	// Test18 returns to the only call that produced a measurable signal in both
+	// locations. Test16 and Test17 ruled out both exterior flags=0x0C calls.
 	// Reject unrelated hot-path calls before taking the renderer mutex.
-	if (a_renderFlags != kInteriorTransparencyRenderFlags &&
-		a_renderFlags != kExteriorTransparencyRenderFlags) {
+	if (a_renderFlags != kInteriorTransparencyRenderFlags) {
 		return;
 	}
 
@@ -1038,17 +1036,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		return;
 	}
 	const auto interior = cell->IsInteriorCell();
-	const auto selectedRenderFlags = interior ?
-		kInteriorTransparencyRenderFlags : kExteriorTransparencyRenderFlags;
-	if (a_renderFlags != selectedRenderFlags) {
-		return;
-	}
-	if (!interior) {
-		++transparencyExteriorCandidateCallCount_;
-		if (transparencyExteriorCandidateCallCount_ != 2U) {
-			return;
-		}
-	}
+	const auto selectedRenderFlags = kInteriorTransparencyRenderFlags;
 	if (transparencyCapture_.pending ||
 		transparencyCapture_.valid) {
 		return;
@@ -1072,7 +1060,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!EnsureTransparencyCapture(device, description)) {
 			if (!loggedSelectedTransparencyCaptureFailure_) {
 				loggedSelectedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Test17 transparency capture is unavailable for the main target");
+				spdlog::warn("Test18 transparency capture is unavailable for the main target");
 			}
 			return;
 		}
@@ -1090,7 +1078,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
 			spdlog::warn(
-				"Test17 transparency capture failed before {} flags=0x{:02X}",
+				"Test18 transparency capture failed before {} flags=0x{:02X}",
 				interior ? "INTERIOR" : "EXTERIOR",
 				selectedRenderFlags);
 		}
@@ -1136,7 +1124,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		if (!loggedSelectedTransparencyCapture_) {
 			loggedSelectedTransparencyCapture_ = true;
 			spdlog::info(
-				"Test17 captured transparency snapshots (interior flags=0x45, exterior second flags=0x0C; texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				"Test18 captured transparency snapshots (interior/exterior flags=0x45, RGB/alpha classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
 				description.Width,
 				description.Height,
 				renderArea.left,
@@ -1149,7 +1137,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		transparencyCapture_.valid = false;
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test17 transparency capture failed after the selected call");
+			spdlog::warn("Test18 transparency capture failed after the selected call");
 		}
 	}
 }
@@ -1215,7 +1203,6 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 	transparencyCallCount_ = 0;
 	transparencyCallOverflowCount_ = 0;
 	transparencyNullAccumulatorCount_ = 0;
-	transparencyExteriorCandidateCallCount_ = 0;
 	// Silhouette colors are display-space choices.  Apply them only after the
 	// game's image-space pass so exposure, tonemapping, and color grading cannot
 	// tint an exact white/black palette.  Normal DoF remains on this HDR-side path.
@@ -1489,7 +1476,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test17 second exterior transparency-call bands activated (interior=0x45, exterior=second 0x0C; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
+				"Test18 transparency RGB/alpha classifier activated (interior/exterior=0x45; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],

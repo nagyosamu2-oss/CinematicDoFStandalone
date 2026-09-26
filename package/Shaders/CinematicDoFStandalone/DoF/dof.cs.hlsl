@@ -762,7 +762,7 @@ float GetTransparencySubjectGate(float2 uv)
 	// while still rejecting distant foliage across the rest of the screen.
 	if (axisLengthSquared > 1e-6f)
 	{
-		// Diagnostic Test19 keeps the broad subject prefilter upright on screen.
+		// Diagnostic Test20 keeps the broad subject prefilter upright on screen.
 		// The projected head-to-feet vector acquires a large horizontal component
 		// in close, low-angle orbit-camera views even though the actor is upright.
 		// Preserve its projected length and head/feet direction, but do not rotate
@@ -784,6 +784,42 @@ float GetTransparencySubjectGate(float2 uv)
 		float2(0.055f, 0.09f));
 	float2 ellipse = (uv - TransparencySubjectGuardCenter) / expandedRadius;
 	return 1.0f - smoothstep(0.88f, 1.0f, length(ellipse));
+}
+
+float GetTransparencyActorCoreGate(float2 uv)
+{
+	if (TransparencySubjectGuardEnabled == 0)
+		return 0.0f;
+
+	float aspect = SharedData::BufferDim.x / max(SharedData::BufferDim.y, 1.0f);
+	float2 samplePoint = float2(uv.x * aspect, uv.y);
+	float2 centre = float2(TransparencySubjectGuardCenter.x * aspect, TransparencySubjectGuardCenter.y);
+	float2 axis = float2(TransparencySubjectGuardAxis.x * aspect, TransparencySubjectGuardAxis.y);
+	float axisLengthSquared = dot(axis, axis);
+
+	if (axisLengthSquared > 1e-6f)
+	{
+		// Use the same projected player measurements as the broad gate, but keep
+		// this capsule close to the head-to-feet extent.  Its width is 1.65 times
+		// the measured actor radius instead of the broad diagnostic gate's 4.0.
+		// This is a spatial prior only; it does not claim to identify equipment.
+		float verticalSign = axis.y <= 0.0f ? -1.0f : 1.0f;
+		axis = float2(0.0f, verticalSign * sqrt(axisLengthSquared));
+		float2 start = centre - axis * 1.20f;
+		float2 end = centre + axis * 1.10f;
+		float2 segment = end - start;
+		float along = saturate(dot(samplePoint - start, segment) /
+			max(dot(segment, segment), 1e-6f));
+		float distanceToAxis = length(samplePoint - (start + segment * along));
+		float radius = max(TransparencySubjectGuardRadius.x * 1.65f, 0.035f);
+		return 1.0f - smoothstep(radius * 0.80f, radius, distanceToAxis);
+	}
+
+	float2 coreRadius = max(
+		TransparencySubjectGuardRadius * float2(1.35f, 1.10f),
+		float2(0.035f, 0.07f));
+	float2 ellipse = (uv - TransparencySubjectGuardCenter) / coreRadius;
+	return 1.0f - smoothstep(0.80f, 1.0f, length(ellipse));
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -1451,11 +1487,10 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test19: Test18 showed that the captured alpha channel does not
-	// change. Classify the signed RGB transition around the player instead:
-	// cyan is a luminance increase, magenta a luminance decrease, yellow a mostly
-	// chromatic/mixed change, and blue no measurable RGB change. This remains
-	// visualization only.
+	// Diagnostic Test20 combines measurable RGB change with two spatial priors.
+	// Green is changed inside the tight actor core; cyan is changed only inside
+	// the broad subject gate. Magenta and blue show unchanged pixels inside and
+	// outside the core respectively. This remains visualization only.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float subjectGate = GetTransparencySubjectGate(uv);
@@ -1463,16 +1498,15 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		{
 			float3 signedDelta = GetTransparencySignedRgbDeltaAtRenderPixel(DTid);
 			float deltaMagnitude = max(abs(signedDelta.r), max(abs(signedDelta.g), abs(signedDelta.b)));
-			float luminanceDelta = dot(signedDelta, float3(0.2126f, 0.7152f, 0.0722f));
-			float directionThreshold = max(TransparencyDeltaThreshold, deltaMagnitude * 0.15f);
-			if (deltaMagnitude < TransparencyDeltaThreshold)
-				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: no RGB change
-			else if (luminanceDelta > directionThreshold)
-				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: brighter after the pass
-			else if (luminanceDelta < -directionThreshold)
-				color.rgb = float3(1.0f, 0.0f, 1.0f); // magenta: darker after the pass
+			float actorCoreGate = GetTransparencyActorCoreGate(uv);
+			if (deltaMagnitude >= TransparencyDeltaThreshold && actorCoreGate > 0.5f)
+				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: changed inside actor core
+			else if (deltaMagnitude >= TransparencyDeltaThreshold)
+				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed outside actor core
+			else if (actorCoreGate > 0.5f)
+				color.rgb = float3(1.0f, 0.0f, 1.0f); // magenta: unchanged inside actor core
 			else
-				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: chromatic/mixed change
+				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: unchanged outside actor core
 		}
 	}
 

@@ -1017,7 +1017,7 @@ void CDoF::DoFRenderer::RecordTransparencyCall(
 
 void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
 {
-	// Test18 returns to the only call that produced a measurable signal in both
+	// Test19 returns to the only call that produced a measurable signal in both
 	// locations. Test16 and Test17 ruled out both exterior flags=0x0C calls.
 	// Reject unrelated hot-path calls before taking the renderer mutex.
 	if (a_renderFlags != kInteriorTransparencyRenderFlags) {
@@ -1060,7 +1060,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!EnsureTransparencyCapture(device, description)) {
 			if (!loggedSelectedTransparencyCaptureFailure_) {
 				loggedSelectedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Test18 transparency capture is unavailable for the main target");
+				spdlog::warn("Test19 transparency capture is unavailable for the main target");
 			}
 			return;
 		}
@@ -1078,7 +1078,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
 			spdlog::warn(
-				"Test18 transparency capture failed before {} flags=0x{:02X}",
+				"Test19 transparency capture failed before {} flags=0x{:02X}",
 				interior ? "INTERIOR" : "EXTERIOR",
 				selectedRenderFlags);
 		}
@@ -1124,7 +1124,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		if (!loggedSelectedTransparencyCapture_) {
 			loggedSelectedTransparencyCapture_ = true;
 			spdlog::info(
-				"Test18 captured transparency snapshots (interior/exterior flags=0x45, RGB/alpha classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				"Test19 captured transparency snapshots (interior/exterior flags=0x45, signed RGB classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
 				description.Width,
 				description.Height,
 				renderArea.left,
@@ -1137,7 +1137,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		transparencyCapture_.valid = false;
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test18 transparency capture failed after the selected call");
+			spdlog::warn("Test19 transparency capture failed after the selected call");
 		}
 	}
 }
@@ -1476,7 +1476,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test18 transparency RGB/alpha classifier activated (interior/exterior=0x45; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; axis {:.3f}, {:.3f})",
+				"Test19 signed RGB classifier activated with screen-upright subject gate (interior/exterior=0x45; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; source axis {:.3f}, {:.3f})",
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],

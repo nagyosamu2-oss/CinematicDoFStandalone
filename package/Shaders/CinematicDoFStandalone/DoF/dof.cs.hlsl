@@ -673,12 +673,12 @@ float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
 	return max(difference.r, max(difference.g, difference.b));
 }
 
-float GetTransparencyAlphaDeltaAtRenderPixel(uint2 renderPixel)
+float3 GetTransparencySignedRgbDeltaAtRenderPixel(uint2 renderPixel)
 {
 	uint2 capturePixel = GetTransparencyCapturePixel(renderPixel);
-	float beforeAlpha = TransparencyBeforeTexture[capturePixel].a;
-	float afterAlpha = TransparencyAfterTexture[capturePixel].a;
-	return abs(afterAlpha - beforeAlpha);
+	float3 beforeColor = TransparencyBeforeTexture[capturePixel].rgb;
+	float3 afterColor = TransparencyAfterTexture[capturePixel].rgb;
+	return afterColor - beforeColor;
 }
 
 bool IsOpaqueNearerAnchor(uint2 samplePixel, float centreDepth, out float sampleDepth)
@@ -762,6 +762,13 @@ float GetTransparencySubjectGate(float2 uv)
 	// while still rejecting distant foliage across the rest of the screen.
 	if (axisLengthSquared > 1e-6f)
 	{
+		// Diagnostic Test19 keeps the broad subject prefilter upright on screen.
+		// The projected head-to-feet vector acquires a large horizontal component
+		// in close, low-angle orbit-camera views even though the actor is upright.
+		// Preserve its projected length and head/feet direction, but do not rotate
+		// the diagnostic region with that perspective artefact.
+		float verticalSign = axis.y <= 0.0f ? -1.0f : 1.0f;
+		axis = float2(0.0f, verticalSign * sqrt(axisLengthSquared));
 		float2 start = centre - axis * 1.65f;
 		float2 end = centre + axis * 1.25f;
 		float2 segment = end - start;
@@ -1444,28 +1451,28 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test18: Test16 and Test17 ruled out both exterior flags=0x0C
-	// calls. The sole exterior flags=0x45 call changes the veil but also broad
-	// scenery, so classify whether the captured alpha channel provides an
-	// independent per-pixel signal. Green is RGB-only, red is alpha-only, yellow
-	// is both, and blue is neither. This remains visualization only.
+	// Diagnostic Test19: Test18 showed that the captured alpha channel does not
+	// change. Classify the signed RGB transition around the player instead:
+	// cyan is a luminance increase, magenta a luminance decrease, yellow a mostly
+	// chromatic/mixed change, and blue no measurable RGB change. This remains
+	// visualization only.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float subjectGate = GetTransparencySubjectGate(uv);
 		if (subjectGate > 0.5f)
 		{
-			bool hasRgbDelta =
-				GetTransparencyDeltaAtRenderPixel(DTid) >= TransparencyDeltaThreshold;
-			bool hasAlphaDelta =
-				GetTransparencyAlphaDeltaAtRenderPixel(DTid) >= TransparencyDeltaThreshold;
-			if (hasRgbDelta && hasAlphaDelta)
-				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: both
-			else if (hasRgbDelta)
-				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: RGB only
-			else if (hasAlphaDelta)
-				color.rgb = float3(1.0f, 0.0f, 0.0f); // red: alpha only
+			float3 signedDelta = GetTransparencySignedRgbDeltaAtRenderPixel(DTid);
+			float deltaMagnitude = max(abs(signedDelta.r), max(abs(signedDelta.g), abs(signedDelta.b)));
+			float luminanceDelta = dot(signedDelta, float3(0.2126f, 0.7152f, 0.0722f));
+			float directionThreshold = max(TransparencyDeltaThreshold, deltaMagnitude * 0.15f);
+			if (deltaMagnitude < TransparencyDeltaThreshold)
+				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: no RGB change
+			else if (luminanceDelta > directionThreshold)
+				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: brighter after the pass
+			else if (luminanceDelta < -directionThreshold)
+				color.rgb = float3(1.0f, 0.0f, 1.0f); // magenta: darker after the pass
 			else
-				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: neither
+				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: chromatic/mixed change
 		}
 	}
 

@@ -175,6 +175,11 @@ cbuffer DoFCB : register(b1)
 	float TransparencySubjectDepthMeters;
 	float2 TransparencySubjectGuardRadius;
 	float2 TransparencySubjectGuardAxis;
+	uint TransparencyPlayerBlendBoundCount;
+	uint TransparencyPlayerTestBoundCount;
+	float2 TransparencyGeometryPadding;
+	float4 TransparencyPlayerBlendBounds[16];
+	float4 TransparencyPlayerTestBounds[16];
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -832,6 +837,21 @@ int GetTransparencyPlayerDepthClass(uint2 renderPixel)
 	if (abs(signedDepthDifference) <= toleranceMeters)
 		return 0;
 	return signedDepthDifference > 0.0f ? 1 : -1;
+}
+
+float GetTransparencyGeometryBoundGate(float2 uv, bool alphaBlended)
+{
+	uint count = alphaBlended ? TransparencyPlayerBlendBoundCount : TransparencyPlayerTestBoundCount;
+	float gate = 0.0f;
+	[loop]
+	for (uint index = 0; index < min(count, 16u); ++index)
+	{
+		float4 bound = alphaBlended ?
+			TransparencyPlayerBlendBounds[index] : TransparencyPlayerTestBounds[index];
+		float2 ellipse = (uv - bound.xy) / max(bound.zw, float2(0.003f, 0.003f));
+		gate = max(gate, 1.0f - smoothstep(0.88f, 1.0f, length(ellipse)));
+	}
+	return gate;
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -1499,10 +1519,10 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test21 asks whether the main depth buffer can separate changed
-	// player-adjacent pixels from changed background pixels. Green and yellow are
-	// close to the projected player depth (inside/outside the tight core), cyan is
-	// behind it, magenta is in front, and blue has no measurable RGB change.
+	// Diagnostic Test22 projects bounds for alpha geometry owned by the player's
+	// scenegraph. Green is changed inside an alpha-blended player bound, yellow is
+	// changed inside an alpha-tested-only player bound, cyan is changed outside
+	// both, magenta is unchanged inside either bound, and blue is unchanged outside.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float subjectGate = GetTransparencySubjectGate(uv);
@@ -1510,22 +1530,19 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		{
 			float3 signedDelta = GetTransparencySignedRgbDeltaAtRenderPixel(DTid);
 			float deltaMagnitude = max(abs(signedDelta.r), max(abs(signedDelta.g), abs(signedDelta.b)));
+			float blendGate = GetTransparencyGeometryBoundGate(uv, true);
+			float testGate = GetTransparencyGeometryBoundGate(uv, false);
+			float playerGeometryGate = max(blendGate, testGate);
 			if (deltaMagnitude < TransparencyDeltaThreshold)
-			{
-				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: no measurable RGB change
-			}
+				color.rgb = playerGeometryGate > 0.5f ?
+					float3(1.0f, 0.0f, 1.0f) : // magenta: unchanged inside player alpha bound
+					float3(0.0f, 0.0f, 1.0f);  // blue: unchanged outside player alpha bounds
+			else if (blendGate > 0.5f)
+				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: changed in player alpha-blend bound
+			else if (testGate > 0.5f)
+				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: changed in player alpha-test bound
 			else
-			{
-				int depthClass = GetTransparencyPlayerDepthClass(DTid);
-				if (depthClass > 0)
-					color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed behind player depth
-				else if (depthClass < 0)
-					color.rgb = float3(1.0f, 0.0f, 1.0f); // magenta: changed in front of player depth
-				else if (GetTransparencyActorCoreGate(uv) > 0.5f)
-					color.rgb = float3(0.0f, 1.0f, 0.0f); // green: player depth inside actor core
-				else
-					color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: player depth outside actor core
-			}
+				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed outside player alpha bounds
 		}
 	}
 

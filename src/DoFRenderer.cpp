@@ -1,6 +1,7 @@
 #include "DoFRenderer.h"
 
 #include "ShaderCompiler.h"
+#include "RE/B/BSVisit.h"
 
 namespace
 {
@@ -49,8 +50,13 @@ namespace
 		float transparencySubjectDepthMeters;
 		Float2 transparencySubjectGuardRadius;
 		Float2 transparencySubjectGuardAxis;
+		std::uint32_t transparencyPlayerBlendBoundCount;
+		std::uint32_t transparencyPlayerTestBoundCount;
+		std::array<float, 2> transparencyGeometryPadding;
+		std::array<std::array<float, 4>, 16> transparencyPlayerBlendBounds;
+		std::array<std::array<float, 4>, 16> transparencyPlayerTestBounds;
 	};
-	static_assert(sizeof(DoFConstants) == 192);
+	static_assert(sizeof(DoFConstants) == 720);
 
 	struct alignas(16) SharedConstants
 	{
@@ -786,6 +792,78 @@ std::optional<CDoF::DoFRenderer::TargetFocusSample> CDoF::DoFRenderer::GetTarget
 				result.guardAxis = { headX - centreX, headY - centreY };
 			}
 		}
+
+		// Test22 uses scenegraph ownership instead of screen depth. Transparent
+		// equipment is attached beneath the player 3D, whereas room glass and
+		// furniture are not. Project each visible alpha geometry's world bound so
+		// the shader can test that distinction without changing normal DoF yet.
+		if (a_target->IsPlayer()) {
+			if (const auto object3D = a_target->Get3D()) {
+				RE::BSVisit::TraverseScenegraphGeometries(
+					object3D,
+					[&](RE::BSGeometry* a_geometry) {
+						if (!a_geometry || a_geometry->GetAppCulled()) {
+							return RE::BSVisit::BSVisitControl::kContinue;
+						}
+
+						const auto alphaProperty = a_geometry->GetGeometryRuntimeData().alphaProperty.get();
+						if (!alphaProperty || (!alphaProperty->GetAlphaBlending() && !alphaProperty->GetAlphaTesting())) {
+							return RE::BSVisit::BSVisitControl::kContinue;
+						}
+
+						const auto& bound = a_geometry->worldBound;
+						if (!std::isfinite(bound.radius) || bound.radius <= 0.1F || bound.radius > 10000.0F) {
+							return RE::BSVisit::BSVisitControl::kContinue;
+						}
+
+						const auto centre = project(bound.center);
+						if (!centre) {
+							return RE::BSVisit::BSVisitControl::kContinue;
+						}
+
+						float minX = centre->at(0);
+						float maxX = centre->at(0);
+						float minY = centre->at(1);
+						float maxY = centre->at(1);
+						const std::array offsets{
+							RE::NiPoint3{ bound.radius, 0.0F, 0.0F },
+							RE::NiPoint3{ -bound.radius, 0.0F, 0.0F },
+							RE::NiPoint3{ 0.0F, bound.radius, 0.0F },
+							RE::NiPoint3{ 0.0F, -bound.radius, 0.0F },
+							RE::NiPoint3{ 0.0F, 0.0F, bound.radius },
+							RE::NiPoint3{ 0.0F, 0.0F, -bound.radius }
+						};
+						for (const auto& offset : offsets) {
+							if (const auto point = project(bound.center + offset)) {
+								minX = std::min(minX, point->at(0));
+								maxX = std::max(maxX, point->at(0));
+								minY = std::min(minY, point->at(1));
+								maxY = std::max(maxY, point->at(1));
+							}
+						}
+
+						TransparencyGeometryBound projectedBound{
+							.center = { (minX + maxX) * 0.5F, (minY + maxY) * 0.5F },
+							.radius = {
+								std::clamp((maxX - minX) * 0.52F, 0.003F, 0.75F),
+								std::clamp((maxY - minY) * 0.52F, 0.003F, 0.75F) }
+						};
+						if (!std::isfinite(projectedBound.center[0]) || !std::isfinite(projectedBound.center[1]) ||
+							!std::isfinite(projectedBound.radius[0]) || !std::isfinite(projectedBound.radius[1])) {
+							return RE::BSVisit::BSVisitControl::kContinue;
+						}
+
+						if (alphaProperty->GetAlphaBlending()) {
+							if (result.transparencyBlendBoundCount < result.transparencyBlendBounds.size()) {
+								result.transparencyBlendBounds[result.transparencyBlendBoundCount++] = projectedBound;
+							}
+						} else if (result.transparencyTestBoundCount < result.transparencyTestBounds.size()) {
+							result.transparencyTestBounds[result.transparencyTestBoundCount++] = projectedBound;
+						}
+						return RE::BSVisit::BSVisitControl::kContinue;
+					});
+			}
+		}
 	} else if (const auto object3D = a_target->Get3D(); object3D &&
 		std::isfinite(object3D->worldBound.radius) && object3D->worldBound.radius > 1.0F) {
 		const auto& bound = object3D->worldBound;
@@ -1017,7 +1095,7 @@ void CDoF::DoFRenderer::RecordTransparencyCall(
 
 void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
 {
-	// Test20 returns to the only call that produced a measurable signal in both
+	// Test22 retains the only call that produced a measurable signal in both
 	// locations. Test16 and Test17 ruled out both exterior flags=0x0C calls.
 	// Reject unrelated hot-path calls before taking the renderer mutex.
 	if (a_renderFlags != kInteriorTransparencyRenderFlags) {
@@ -1060,7 +1138,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!EnsureTransparencyCapture(device, description)) {
 			if (!loggedSelectedTransparencyCaptureFailure_) {
 				loggedSelectedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Test20 transparency capture is unavailable for the main target");
+				spdlog::warn("Test22 transparency capture is unavailable for the main target");
 			}
 			return;
 		}
@@ -1078,7 +1156,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
 			spdlog::warn(
-				"Test20 transparency capture failed before {} flags=0x{:02X}",
+				"Test22 transparency capture failed before {} flags=0x{:02X}",
 				interior ? "INTERIOR" : "EXTERIOR",
 				selectedRenderFlags);
 		}
@@ -1124,7 +1202,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		if (!loggedSelectedTransparencyCapture_) {
 			loggedSelectedTransparencyCapture_ = true;
 			spdlog::info(
-				"Test20 captured transparency snapshots (interior/exterior flags=0x45, actor-proximity classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				"Test22 captured transparency snapshots (interior/exterior flags=0x45, player alpha-geometry classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
 				description.Width,
 				description.Height,
 				renderArea.left,
@@ -1137,7 +1215,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		transparencyCapture_.valid = false;
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test20 transparency capture failed after the selected call");
+			spdlog::warn("Test22 transparency capture failed after the selected call");
 		}
 	}
 }
@@ -1476,14 +1554,13 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test21 player-depth classifier activated with broad and tight screen-upright subject gates (interior/exterior=0x45; depth {:.2f} m; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; source axis {:.3f}, {:.3f})",
-				transparencySubjectGuard->distanceMeters,
+				"Test22 player alpha-geometry classifier activated (interior/exterior=0x45; alpha blend bounds {}; alpha test bounds {}; broad centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f})",
+				transparencySubjectGuard->transparencyBlendBoundCount,
+				transparencySubjectGuard->transparencyTestBoundCount,
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],
-				transparencySubjectGuard->guardRadius[1],
-				transparencySubjectGuard->guardAxis[0],
-				transparencySubjectGuard->guardAxis[1]);
+				transparencySubjectGuard->guardRadius[1]);
 		}
 		ID3D11RenderTargetView* restoreRTV = currentRTV.Get();
 		OutputMergerRestore restore{ context, restoreRTV, currentDSV.Get() };
@@ -1590,7 +1667,7 @@ void CDoF::DoFRenderer::Dispatch(
 		a_targetNearFocusMinimumMeters > 0.0F ?
 			std::max(a_settings.nearFocusRangeMeters, a_targetNearFocusMinimumMeters) :
 			a_settings.nearFocusRangeMeters;
-	const DoFConstants dofData{
+	DoFConstants dofData{
 		.transitionSpeed = resources_.focusInitialized ? a_settings.transitionSpeed : 1.0F,
 		.focusCoordinate = { a_settings.focusX, a_settings.focusY },
 		.manualFocusPlane = a_settings.manualFocusMeters / 1000.0F,
@@ -1643,8 +1720,24 @@ void CDoF::DoFRenderer::Dispatch(
 			Float2{},
 		.transparencySubjectGuardAxis = a_transparencySubjectGuard ?
 			Float2{ a_transparencySubjectGuard->guardAxis[0], a_transparencySubjectGuard->guardAxis[1] } :
-			Float2{}
+			Float2{},
+		.transparencyPlayerBlendBoundCount = a_transparencySubjectGuard ?
+			a_transparencySubjectGuard->transparencyBlendBoundCount : 0U,
+		.transparencyPlayerTestBoundCount = a_transparencySubjectGuard ?
+			a_transparencySubjectGuard->transparencyTestBoundCount : 0U
 	};
+	if (a_transparencySubjectGuard) {
+		for (std::size_t index = 0; index < a_transparencySubjectGuard->transparencyBlendBoundCount; ++index) {
+			const auto& bound = a_transparencySubjectGuard->transparencyBlendBounds[index];
+			dofData.transparencyPlayerBlendBounds[index] = {
+				bound.center[0], bound.center[1], bound.radius[0], bound.radius[1] };
+		}
+		for (std::size_t index = 0; index < a_transparencySubjectGuard->transparencyTestBoundCount; ++index) {
+			const auto& bound = a_transparencySubjectGuard->transparencyTestBounds[index];
+			dofData.transparencyPlayerTestBounds[index] = {
+				bound.center[0], bound.center[1], bound.radius[0], bound.radius[1] };
+		}
+	}
 	const SharedConstants sharedData{
 		.cameraData = GetCameraData(),
 		.bufferDimensions = {

@@ -22,6 +22,14 @@ namespace CDoF
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
 
 	private:
+		static constexpr std::size_t kMaximumTransparencyGeometryBounds = 16;
+
+		struct TransparencyGeometryBound
+		{
+			std::array<float, 2> center{ 0.5F, 0.5F };
+			std::array<float, 2> radius{};
+		};
+
 		struct TargetFocusSample
 		{
 			float distanceMeters{};
@@ -31,6 +39,10 @@ namespace CDoF
 			std::array<float, 2> guardAxis{};
 			std::array<float, 2> headGuardCenter{ 0.5F, 0.5F };
 			float headGuardRadius{};
+			std::array<TransparencyGeometryBound, kMaximumTransparencyGeometryBounds> transparencyBlendBounds{};
+			std::array<TransparencyGeometryBound, kMaximumTransparencyGeometryBounds> transparencyTestBounds{};
+			std::uint32_t transparencyBlendBoundCount{};
+			std::uint32_t transparencyTestBoundCount{};
 			bool guardValid{ false };
 			bool headGuardValid{ false };
 			bool surfaceFocusValid{ false };

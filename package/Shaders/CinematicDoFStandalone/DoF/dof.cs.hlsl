@@ -172,7 +172,7 @@ cbuffer DoFCB : register(b1)
 	float4 TransparencyCaptureRegion;
 	uint TransparencySubjectGuardEnabled;
 	float2 TransparencySubjectGuardCenter;
-	float TransparencySubjectGuardPadding;
+	float TransparencySubjectDepthMeters;
 	float2 TransparencySubjectGuardRadius;
 	float2 TransparencySubjectGuardAxis;
 };
@@ -820,6 +820,18 @@ float GetTransparencyActorCoreGate(float2 uv)
 		float2(0.035f, 0.07f));
 	float2 ellipse = (uv - TransparencySubjectGuardCenter) / coreRadius;
 	return 1.0f - smoothstep(0.80f, 1.0f, length(ellipse));
+}
+
+int GetTransparencyPlayerDepthClass(uint2 renderPixel)
+{
+	float pixelDepthMeters = GetDepthAtRenderPixel(renderPixel) * 1000.0f;
+	// The projected player anchor is the head. Allow enough room for the body and
+	// low-angle perspective without accepting an unlimited amount of background.
+	float toleranceMeters = clamp(TransparencySubjectDepthMeters * 0.08f, 0.45f, 1.25f);
+	float signedDepthDifference = pixelDepthMeters - TransparencySubjectDepthMeters;
+	if (abs(signedDepthDifference) <= toleranceMeters)
+		return 0;
+	return signedDepthDifference > 0.0f ? 1 : -1;
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -1487,10 +1499,10 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test20 combines measurable RGB change with two spatial priors.
-	// Green is changed inside the tight actor core; cyan is changed only inside
-	// the broad subject gate. Magenta and blue show unchanged pixels inside and
-	// outside the core respectively. This remains visualization only.
+	// Diagnostic Test21 asks whether the main depth buffer can separate changed
+	// player-adjacent pixels from changed background pixels. Green and yellow are
+	// close to the projected player depth (inside/outside the tight core), cyan is
+	// behind it, magenta is in front, and blue has no measurable RGB change.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float subjectGate = GetTransparencySubjectGate(uv);
@@ -1498,15 +1510,22 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		{
 			float3 signedDelta = GetTransparencySignedRgbDeltaAtRenderPixel(DTid);
 			float deltaMagnitude = max(abs(signedDelta.r), max(abs(signedDelta.g), abs(signedDelta.b)));
-			float actorCoreGate = GetTransparencyActorCoreGate(uv);
-			if (deltaMagnitude >= TransparencyDeltaThreshold && actorCoreGate > 0.5f)
-				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: changed inside actor core
-			else if (deltaMagnitude >= TransparencyDeltaThreshold)
-				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed outside actor core
-			else if (actorCoreGate > 0.5f)
-				color.rgb = float3(1.0f, 0.0f, 1.0f); // magenta: unchanged inside actor core
+			if (deltaMagnitude < TransparencyDeltaThreshold)
+			{
+				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: no measurable RGB change
+			}
 			else
-				color.rgb = float3(0.0f, 0.0f, 1.0f); // blue: unchanged outside actor core
+			{
+				int depthClass = GetTransparencyPlayerDepthClass(DTid);
+				if (depthClass > 0)
+					color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed behind player depth
+				else if (depthClass < 0)
+					color.rgb = float3(1.0f, 0.0f, 1.0f); // magenta: changed in front of player depth
+				else if (GetTransparencyActorCoreGate(uv) > 0.5f)
+					color.rgb = float3(0.0f, 1.0f, 0.0f); // green: player depth inside actor core
+				else
+					color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: player depth outside actor core
+			}
 		}
 	}
 

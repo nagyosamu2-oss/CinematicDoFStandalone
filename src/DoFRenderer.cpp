@@ -46,7 +46,7 @@ namespace
 		std::array<float, 4> transparencyCaptureRegion;
 		std::uint32_t transparencySubjectGuardEnabled;
 		Float2 transparencySubjectGuardCenter;
-		float transparencySubjectGuardPadding;
+		float transparencySubjectDepthMeters;
 		Float2 transparencySubjectGuardRadius;
 		Float2 transparencySubjectGuardAxis;
 	};
@@ -1476,7 +1476,8 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test20 actor-proximity classifier activated with broad and tight screen-upright subject gates (interior/exterior=0x45; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; source axis {:.3f}, {:.3f})",
+				"Test21 player-depth classifier activated with broad and tight screen-upright subject gates (interior/exterior=0x45; depth {:.2f} m; centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f}; source axis {:.3f}, {:.3f})",
+				transparencySubjectGuard->distanceMeters,
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],
@@ -1635,7 +1636,8 @@ void CDoF::DoFRenderer::Dispatch(
 		.transparencySubjectGuardCenter = a_transparencySubjectGuard ?
 			Float2{ a_transparencySubjectGuard->guardCenter[0], a_transparencySubjectGuard->guardCenter[1] } :
 			Float2{ 0.5F, 0.5F },
-		.transparencySubjectGuardPadding = 0.0F,
+		.transparencySubjectDepthMeters = a_transparencySubjectGuard ?
+			a_transparencySubjectGuard->distanceMeters : 0.0F,
 		.transparencySubjectGuardRadius = a_transparencySubjectGuard ?
 			Float2{ a_transparencySubjectGuard->guardRadius[0], a_transparencySubjectGuard->guardRadius[1] } :
 			Float2{},

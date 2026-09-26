@@ -1317,9 +1317,8 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		pointsOnRing += pointsFirstRing;
 		currentRingRadiusCoords += ringRadiusDeltaCoords;
 	}
-	// A dilated near-CoC footprint can occasionally reach a pixel whose entire
-	// gather disk belongs to the far plane. Do not turn that rejected gather into
-	// a black translucent fringe; leave the near layer empty at that pixel.
+	// A strict CoC-compatibility test can reject every far-gather tap. Avoid
+	// normalizing an empty colour sum in that exceptional case.
 	if (average.w <= 1e-5f) {
 		color.a = 0.0f;
 		RWTexOut[DTid] = color;
@@ -1421,6 +1420,16 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		}
 		pointsOnRing += pointsFirstRing;
 		currentRingRadiusCoords += ringRadiusDeltaCoords;
+	}
+	// The dilated near-CoC footprint can reach a background pixel while every
+	// colour tap is rejected by the CoC compatibility test. Dividing that empty
+	// sum produces black while the independently calculated coverage remains
+	// non-zero, which composites as a thick dark membrane around foreground
+	// silhouettes. Leave the near layer empty when it has no valid colour.
+	if (average.w <= 1e-5f) {
+		color.a = 0.0f;
+		RWTexOut[DTid] = color;
+		return;
 	}
 	float inverseWeight = rcp(average.w + (average.w == 0));
 	average.rgb *= inverseWeight;

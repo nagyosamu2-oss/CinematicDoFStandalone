@@ -1467,7 +1467,11 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 			const auto standaloneTargetGuardSetting =
 				(runtimeReflectionsEnabled && !*runtimeReflectionsEnabled) ||
 				standaloneHdrTargetGuardSetting;
-			useLowSpecDepthFallback_ = communityShadersLoaded && lowSpecDepthSettings;
+			const auto lowSpecDepthFallbackRequested = communityShadersLoaded && lowSpecDepthSettings;
+			// Test24 compares Skyrim's full-resolution main depth against ReShade's
+			// selected 2560x1440 D24S8 resource.  Keep the normal fallback decision in
+			// the log, but deliberately use kMAIN for this diagnostic build.
+			useLowSpecDepthFallback_ = false;
 			useStandaloneNonActorTargetGuard_ =
 				!communityShadersLoaded && standaloneTargetGuardSetting;
 			// Visual A/B testing selected the assisted Test 7A result: when Community
@@ -1478,17 +1482,51 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				!communityShadersLoaded && standaloneHdrTargetGuardSetting;
 			depthPathChecked_ = true;
 			spdlog::info(
-				"Display depth settings at first frame: SAO={}, SSR={}, 64-bit HDR={}; main target format={} (actual 64-bit HDR target={}); Community Shaders={}; selected {} depth path; tracked-actor depth guard=unified; standalone non-actor guard={}; Community Shaders actor near-focus assist={}; standalone HDR-off near-focus assist={}",
+				"Test24 display depth settings at first frame: SAO={}, SSR={}, 64-bit HDR={}; main target format={} (actual 64-bit HDR target={}); Community Shaders={}; low-spec fallback requested={}; forced standard main depth path; tracked-actor depth guard=unified; standalone non-actor guard={}; Community Shaders actor near-focus assist={}; standalone HDR-off near-focus assist={}",
 				DescribeDisplayBool(runtimeSaoEnabled),
 				DescribeDisplayBool(runtimeReflectionsEnabled),
 				DescribeDisplayBool(runtimeHdr64Enabled),
 				static_cast<std::uint32_t>(inputDescription.Format),
 				actualHdr64Target ? "yes" : "no",
 				communityShadersLoaded ? "loaded" : "not loaded",
-				useLowSpecDepthFallback_ ? "low-spec fallback" : "standard",
+				lowSpecDepthFallbackRequested ? "yes" : "no",
 				useStandaloneNonActorTargetGuard_ ? "enabled" : "disabled",
 				useCommunityShadersActorNearFocusAssist_ ? "enabled" : "disabled",
 				useStandaloneNearFocusAssist_ ? "enabled" : "disabled");
+
+			const auto logDepthResource = [](std::string_view a_name, ID3D11ShaderResourceView* a_view) {
+				if (!a_view) {
+					spdlog::info("Test24 {} depth resource is unavailable", a_name);
+					return;
+				}
+				ComPtr<ID3D11Resource> resource;
+				a_view->GetResource(resource.GetAddressOf());
+				ComPtr<ID3D11Texture2D> texture;
+				if (!resource || FAILED(resource.As(&texture)) || !texture) {
+					spdlog::info(
+						"Test24 {} depth: resource=0x{:016X}, SRV=0x{:016X}, not a Texture2D",
+						a_name,
+						reinterpret_cast<std::uintptr_t>(resource.Get()),
+						reinterpret_cast<std::uintptr_t>(a_view));
+					return;
+				}
+				D3D11_TEXTURE2D_DESC description{};
+				texture->GetDesc(&description);
+				spdlog::info(
+					"Test24 {} depth: resource=0x{:016X}, SRV=0x{:016X}, {}x{}, format={}, samples={}, bindFlags=0x{:X}",
+					a_name,
+					reinterpret_cast<std::uintptr_t>(resource.Get()),
+					reinterpret_cast<std::uintptr_t>(a_view),
+					description.Width,
+					description.Height,
+					static_cast<std::uint32_t>(description.Format),
+					description.SampleDesc.Count,
+					description.BindFlags);
+			};
+			logDepthResource("main", mainDepth);
+			logDepthResource(
+				"post-z-prepass-copy",
+				depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV);
 			if (lowSpecDepthSettings && !communityShadersLoaded) {
 				spdlog::warn(
 					"Low-spec depth settings were detected, but Community Shaders was not loaded; preserving the standard depth path");
@@ -1728,7 +1766,9 @@ void CDoF::DoFRenderer::Dispatch(
 		.keepSkySharp = a_settings.keepSkySharp ? 1U : 0U,
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
-		.transparencyDiagnosticEnabled = transparencyCapture_.valid ? 1U : 0U,
+		// Test24 restores the normal DoF image so the forced main-depth path can be
+		// judged directly.  Test23's capture remains available only for logging.
+		.transparencyDiagnosticEnabled = 0U,
 		.transparencyDeltaThreshold = 0.00025F,
 		.transparencyCaptureRegion = {
 			static_cast<float>(transparencyCapture_.renderLeft),

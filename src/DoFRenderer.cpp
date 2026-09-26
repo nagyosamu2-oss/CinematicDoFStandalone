@@ -50,13 +50,13 @@ namespace
 		float transparencySubjectDepthMeters;
 		Float2 transparencySubjectGuardRadius;
 		Float2 transparencySubjectGuardAxis;
-		std::uint32_t transparencyPlayerBlendBoundCount;
-		std::uint32_t transparencyPlayerTestBoundCount;
+		std::uint32_t transparencyCandidateBoundCount;
+		std::uint32_t playerGeometryBoundCount;
 		std::array<float, 2> transparencyGeometryPadding;
-		std::array<std::array<float, 4>, 16> transparencyPlayerBlendBounds;
-		std::array<std::array<float, 4>, 16> transparencyPlayerTestBounds;
+		std::array<std::array<float, 4>, 32> transparencyCandidateBounds;
+		std::array<std::array<float, 4>, 32> playerGeometryBounds;
 	};
-	static_assert(sizeof(DoFConstants) == 720);
+	static_assert(sizeof(DoFConstants) == 1232);
 
 	struct alignas(16) SharedConstants
 	{
@@ -793,10 +793,9 @@ std::optional<CDoF::DoFRenderer::TargetFocusSample> CDoF::DoFRenderer::GetTarget
 			}
 		}
 
-		// Test22 uses scenegraph ownership instead of screen depth. Transparent
-		// equipment is attached beneath the player 3D, whereas room glass and
-		// furniture are not. Project each visible alpha geometry's world bound so
-		// the shader can test that distinction without changing normal DoF yet.
+		// Test23 separates a failed alpha classification from a failed scenegraph
+		// traversal. Project every visible player geometry, then independently mark
+		// candidates using both classic NiAlphaProperty and shader/material hints.
 		if (a_target->IsPlayer()) {
 			if (const auto object3D = a_target->Get3D()) {
 				RE::BSVisit::TraverseScenegraphGeometries(
@@ -806,9 +805,28 @@ std::optional<CDoF::DoFRenderer::TargetFocusSample> CDoF::DoFRenderer::GetTarget
 							return RE::BSVisit::BSVisitControl::kContinue;
 						}
 
-						const auto alphaProperty = a_geometry->GetGeometryRuntimeData().alphaProperty.get();
-						if (!alphaProperty || (!alphaProperty->GetAlphaBlending() && !alphaProperty->GetAlphaTesting())) {
-							return RE::BSVisit::BSVisitControl::kContinue;
+						const auto& runtimeData = a_geometry->GetGeometryRuntimeData();
+						const auto alphaProperty = runtimeData.alphaProperty.get();
+						const auto classicAlpha = alphaProperty &&
+							(alphaProperty->GetAlphaBlending() || alphaProperty->GetAlphaTesting());
+						const auto shaderProperty = runtimeData.shaderProperty.get();
+						bool shaderAlpha = false;
+						if (shaderProperty) {
+							using Flag = RE::BSShaderProperty::EShaderPropertyFlag;
+							shaderAlpha = shaderProperty->alpha < 0.999F ||
+								shaderProperty->flags.all(Flag::kVertexAlpha) ||
+								shaderProperty->flags.all(Flag::kGrayscaleToPaletteAlpha) ||
+								shaderProperty->flags.all(Flag::kTempRefraction) ||
+								shaderProperty->flags.all(Flag::kRefraction) ||
+								shaderProperty->flags.all(Flag::kScreendoorAlphaFade) ||
+								shaderProperty->flags.all(Flag::kPremultAlpha) ||
+								shaderProperty->flags.all(Flag::kNoTransparencyMultiSample);
+							if (const auto lightingProperty = a_geometry->lightingShaderProp_cast()) {
+								if (const auto material = static_cast<RE::BSLightingShaderMaterialBase*>(
+									lightingProperty->GetBaseMaterial())) {
+									shaderAlpha = shaderAlpha || material->materialAlpha < 0.999F;
+								}
+							}
 						}
 
 						const auto& bound = a_geometry->worldBound;
@@ -853,12 +871,18 @@ std::optional<CDoF::DoFRenderer::TargetFocusSample> CDoF::DoFRenderer::GetTarget
 							return RE::BSVisit::BSVisitControl::kContinue;
 						}
 
-						if (alphaProperty->GetAlphaBlending()) {
-							if (result.transparencyBlendBoundCount < result.transparencyBlendBounds.size()) {
-								result.transparencyBlendBounds[result.transparencyBlendBoundCount++] = projectedBound;
-							}
-						} else if (result.transparencyTestBoundCount < result.transparencyTestBounds.size()) {
-							result.transparencyTestBounds[result.transparencyTestBoundCount++] = projectedBound;
+						if (result.playerGeometryBoundCount < result.playerGeometryBounds.size()) {
+							result.playerGeometryBounds[result.playerGeometryBoundCount++] = projectedBound;
+						}
+						if (classicAlpha) {
+							++result.classicAlphaGeometryCount;
+						}
+						if (shaderAlpha) {
+							++result.shaderAlphaGeometryCount;
+						}
+						if ((classicAlpha || shaderAlpha) &&
+							result.transparencyCandidateBoundCount < result.transparencyCandidateBounds.size()) {
+							result.transparencyCandidateBounds[result.transparencyCandidateBoundCount++] = projectedBound;
 						}
 						return RE::BSVisit::BSVisitControl::kContinue;
 					});
@@ -1095,7 +1119,7 @@ void CDoF::DoFRenderer::RecordTransparencyCall(
 
 void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
 {
-	// Test22 retains the only call that produced a measurable signal in both
+	// Test23 retains the only call that produced a measurable signal in both
 	// locations. Test16 and Test17 ruled out both exterior flags=0x0C calls.
 	// Reject unrelated hot-path calls before taking the renderer mutex.
 	if (a_renderFlags != kInteriorTransparencyRenderFlags) {
@@ -1138,7 +1162,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!EnsureTransparencyCapture(device, description)) {
 			if (!loggedSelectedTransparencyCaptureFailure_) {
 				loggedSelectedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Test22 transparency capture is unavailable for the main target");
+				spdlog::warn("Test23 transparency capture is unavailable for the main target");
 			}
 			return;
 		}
@@ -1156,7 +1180,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_render
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
 			spdlog::warn(
-				"Test22 transparency capture failed before {} flags=0x{:02X}",
+				"Test23 transparency capture failed before {} flags=0x{:02X}",
 				interior ? "INTERIOR" : "EXTERIOR",
 				selectedRenderFlags);
 		}
@@ -1202,7 +1226,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		if (!loggedSelectedTransparencyCapture_) {
 			loggedSelectedTransparencyCapture_ = true;
 			spdlog::info(
-				"Test22 captured transparency snapshots (interior/exterior flags=0x45, player alpha-geometry classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
+				"Test23 captured transparency snapshots (interior/exterior flags=0x45, player shader-geometry classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
 				description.Width,
 				description.Height,
 				renderArea.left,
@@ -1215,7 +1239,7 @@ void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
 		transparencyCapture_.valid = false;
 		if (!loggedSelectedTransparencyCaptureFailure_) {
 			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test22 transparency capture failed after the selected call");
+			spdlog::warn("Test23 transparency capture failed after the selected call");
 		}
 	}
 }
@@ -1554,9 +1578,11 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
 			loggedTransparencySubjectGuard_ = true;
 			spdlog::info(
-				"Test22 player alpha-geometry classifier activated (interior/exterior=0x45; alpha blend bounds {}; alpha test bounds {}; broad centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f})",
-				transparencySubjectGuard->transparencyBlendBoundCount,
-				transparencySubjectGuard->transparencyTestBoundCount,
+				"Test23 player shader-geometry classifier activated (interior/exterior=0x45; candidate bounds {}; all geometry bounds {}; classic alpha geometries {}; shader/material alpha geometries {}; broad centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f})",
+				transparencySubjectGuard->transparencyCandidateBoundCount,
+				transparencySubjectGuard->playerGeometryBoundCount,
+				transparencySubjectGuard->classicAlphaGeometryCount,
+				transparencySubjectGuard->shaderAlphaGeometryCount,
 				transparencySubjectGuard->guardCenter[0],
 				transparencySubjectGuard->guardCenter[1],
 				transparencySubjectGuard->guardRadius[0],
@@ -1721,20 +1747,20 @@ void CDoF::DoFRenderer::Dispatch(
 		.transparencySubjectGuardAxis = a_transparencySubjectGuard ?
 			Float2{ a_transparencySubjectGuard->guardAxis[0], a_transparencySubjectGuard->guardAxis[1] } :
 			Float2{},
-		.transparencyPlayerBlendBoundCount = a_transparencySubjectGuard ?
-			a_transparencySubjectGuard->transparencyBlendBoundCount : 0U,
-		.transparencyPlayerTestBoundCount = a_transparencySubjectGuard ?
-			a_transparencySubjectGuard->transparencyTestBoundCount : 0U
+		.transparencyCandidateBoundCount = a_transparencySubjectGuard ?
+			a_transparencySubjectGuard->transparencyCandidateBoundCount : 0U,
+		.playerGeometryBoundCount = a_transparencySubjectGuard ?
+			a_transparencySubjectGuard->playerGeometryBoundCount : 0U
 	};
 	if (a_transparencySubjectGuard) {
-		for (std::size_t index = 0; index < a_transparencySubjectGuard->transparencyBlendBoundCount; ++index) {
-			const auto& bound = a_transparencySubjectGuard->transparencyBlendBounds[index];
-			dofData.transparencyPlayerBlendBounds[index] = {
+		for (std::size_t index = 0; index < a_transparencySubjectGuard->transparencyCandidateBoundCount; ++index) {
+			const auto& bound = a_transparencySubjectGuard->transparencyCandidateBounds[index];
+			dofData.transparencyCandidateBounds[index] = {
 				bound.center[0], bound.center[1], bound.radius[0], bound.radius[1] };
 		}
-		for (std::size_t index = 0; index < a_transparencySubjectGuard->transparencyTestBoundCount; ++index) {
-			const auto& bound = a_transparencySubjectGuard->transparencyTestBounds[index];
-			dofData.transparencyPlayerTestBounds[index] = {
+		for (std::size_t index = 0; index < a_transparencySubjectGuard->playerGeometryBoundCount; ++index) {
+			const auto& bound = a_transparencySubjectGuard->playerGeometryBounds[index];
+			dofData.playerGeometryBounds[index] = {
 				bound.center[0], bound.center[1], bound.radius[0], bound.radius[1] };
 		}
 	}

@@ -175,11 +175,11 @@ cbuffer DoFCB : register(b1)
 	float TransparencySubjectDepthMeters;
 	float2 TransparencySubjectGuardRadius;
 	float2 TransparencySubjectGuardAxis;
-	uint TransparencyPlayerBlendBoundCount;
-	uint TransparencyPlayerTestBoundCount;
+	uint TransparencyCandidateBoundCount;
+	uint PlayerGeometryBoundCount;
 	float2 TransparencyGeometryPadding;
-	float4 TransparencyPlayerBlendBounds[16];
-	float4 TransparencyPlayerTestBounds[16];
+	float4 TransparencyCandidateBounds[32];
+	float4 PlayerGeometryBounds[32];
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -839,15 +839,15 @@ int GetTransparencyPlayerDepthClass(uint2 renderPixel)
 	return signedDepthDifference > 0.0f ? 1 : -1;
 }
 
-float GetTransparencyGeometryBoundGate(float2 uv, bool alphaBlended)
+float GetTransparencyGeometryBoundGate(float2 uv, bool candidate)
 {
-	uint count = alphaBlended ? TransparencyPlayerBlendBoundCount : TransparencyPlayerTestBoundCount;
+	uint count = candidate ? TransparencyCandidateBoundCount : PlayerGeometryBoundCount;
 	float gate = 0.0f;
 	[loop]
-	for (uint index = 0; index < min(count, 16u); ++index)
+	for (uint index = 0; index < min(count, 32u); ++index)
 	{
-		float4 bound = alphaBlended ?
-			TransparencyPlayerBlendBounds[index] : TransparencyPlayerTestBounds[index];
+		float4 bound = candidate ?
+			TransparencyCandidateBounds[index] : PlayerGeometryBounds[index];
 		float2 ellipse = (uv - bound.xy) / max(bound.zw, float2(0.003f, 0.003f));
 		gate = max(gate, 1.0f - smoothstep(0.88f, 1.0f, length(ellipse)));
 	}
@@ -1519,10 +1519,8 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
 
-	// Diagnostic Test22 projects bounds for alpha geometry owned by the player's
-	// scenegraph. Green is changed inside an alpha-blended player bound, yellow is
-	// changed inside an alpha-tested-only player bound, cyan is changed outside
-	// both, magenta is unchanged inside either bound, and blue is unchanged outside.
+	// Diagnostic Test23 projects every player geometry bound and separately marks
+	// candidates found through NiAlphaProperty or shader/material alpha hints.
 	if (TransparencyDiagnosticEnabled != 0)
 	{
 		float subjectGate = GetTransparencySubjectGate(uv);
@@ -1530,19 +1528,18 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		{
 			float3 signedDelta = GetTransparencySignedRgbDeltaAtRenderPixel(DTid);
 			float deltaMagnitude = max(abs(signedDelta.r), max(abs(signedDelta.g), abs(signedDelta.b)));
-			float blendGate = GetTransparencyGeometryBoundGate(uv, true);
-			float testGate = GetTransparencyGeometryBoundGate(uv, false);
-			float playerGeometryGate = max(blendGate, testGate);
+			float candidateGate = GetTransparencyGeometryBoundGate(uv, true);
+			float playerGeometryGate = GetTransparencyGeometryBoundGate(uv, false);
 			if (deltaMagnitude < TransparencyDeltaThreshold)
 				color.rgb = playerGeometryGate > 0.5f ?
-					float3(1.0f, 0.0f, 1.0f) : // magenta: unchanged inside player alpha bound
-					float3(0.0f, 0.0f, 1.0f);  // blue: unchanged outside player alpha bounds
-			else if (blendGate > 0.5f)
-				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: changed in player alpha-blend bound
-			else if (testGate > 0.5f)
-				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: changed in player alpha-test bound
+					float3(1.0f, 0.0f, 1.0f) : // magenta: unchanged inside any player geometry bound
+					float3(0.0f, 0.0f, 1.0f);  // blue: unchanged outside player geometry bounds
+			else if (candidateGate > 0.5f)
+				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: changed in alpha candidate bound
+			else if (playerGeometryGate > 0.5f)
+				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: changed in other player geometry bound
 			else
-				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed outside player alpha bounds
+				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed outside player geometry bounds
 		}
 	}
 

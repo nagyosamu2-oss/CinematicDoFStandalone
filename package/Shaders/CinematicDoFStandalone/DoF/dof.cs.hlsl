@@ -290,8 +290,8 @@ float GetMoonFarDepthProtection(uint2 renderPixel)
 	if (KeepSkySharp == 0)
 		return 0.0f;
 
-	// Test 26 measured the moon at a raw-depth clear gap of 1e-7..3e-7 in
-	// every tested sea view. Even the farthest water and terrain remained at
+	// Validated sea views place the moon at a raw-depth clear gap of 1e-7..3e-7.
+	// Even the farthest water and terrain remained at
 	// 3e-6 or more. Classify only pixels actually written immediately below the
 	// 1.0 clear value: untouched sky is excluded, as are nearer occluders.
 	float rawDepth = SkyMaskDepthTexture[GetInputPixel(renderPixel)];
@@ -333,10 +333,10 @@ float GetSkyInteriorProtection(uint2 renderPixel)
 	if (KeepSkySharp == 0)
 		return 0.0f;
 
-	// Test 1: preserve the exact full-resolution clear-depth classification.
-	// The previous multi-ring safety test deliberately left a blur-radius-sized
-	// band of sky unprotected around geometry. At a wide aperture that band became
-	// a visible expanding halo around moons, mountains, trees, and buildings.
+	// Preserve the exact full-resolution clear-depth classification. A broad
+	// unprotected band around geometry expands with the blur radius and becomes a
+	// visible halo around moons, mountains, trees, and buildings; boundary softness
+	// is therefore handled later by the local coverage composite instead.
 	return GetSkyClearDepthMask(renderPixel);
 }
 
@@ -590,7 +590,7 @@ float CalculateBlurDiscSize(FocusInfo focusInfo)
 
 float RefineFarCoCAtFocusedBoundary(FocusInfo focusInfo, uint2 renderPixel, float centreCoC)
 {
-	// Test 1: protect only the far/background side of a discontinuity. If one of
+	// Protect only the far/background side of a discontinuity. If one of
 	// the four immediately adjacent texels is nearer and has a smaller CoC, use
 	// that CoC for the boundary pixel. This is deliberately limited to one pixel;
 	// it runs before tiling and blur, and does not alter the existing actor guard.
@@ -986,17 +986,17 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 float GetFarGatherMip(float kernelRadiusInPixels, float ringCount)
 {
-	// Keep Sky Sharp Test 2: coarse color levels may already contain bright sky
-	// mixed into distant geometry before the per-tap depth rejection runs. Force
-	// the half-resolution source while sky protection is enabled to isolate that
-	// contamination path. The normal adaptive gather remains unchanged when off.
+	// Coarse color levels can already contain bright sky mixed into distant
+	// geometry before per-tap depth rejection runs. While sky protection is active,
+	// keep the gather on the half-resolution source so sky color cannot enter the
+	// protected geometry through an earlier reduction stage.
 	if (KeepSkySharp != 0)
 		return 0.0f;
 
 	// Mip 0 is already half resolution. Match each tap to the average radial
-	// spacing of the current concentric-ring kernel. Test 2 deliberately delays
-	// each coarser-level transition until the spacing reaches the next full power
-	// of two, preserving more aperture-edge detail than Test 1.
+	// spacing of the current concentric-ring kernel. Each coarser-level transition
+	// waits until the spacing reaches the next full power of two, preserving more
+	// aperture-edge detail.
 	float halfResolutionRadius = kernelRadiusInPixels * 0.5f;
 	float sampleSpacing = halfResolutionRadius / max(ringCount + 0.5f, 1.0f);
 	return clamp(floor(log2(max(sampleSpacing, 1.0f))), 0.0f, 3.0f);
@@ -1278,8 +1278,8 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	color.rgb = lerp(color.rgb, nearFragment.rgb, nearBlend);
 	float skyProtection = RecoverSkyInteriorProtection(DTid, uv, pixelCoC);
 	color.rgb = lerp(color.rgb, sourceFragment.rgb, skyProtection);
-	// Keep Sky Sharp Test 3: exact sky restoration made alpha-tested foliage and
-	// other thin silhouettes look sharp only where they crossed the sky.  Reapply
+	// Exact sky restoration can make alpha-tested foliage and other thin
+	// silhouettes look sharp only where they cross the sky. Reapply
 	// a fractional amount of the filtered far layer to clear-depth boundary pixels
 	// using local geometry coverage. Interior sky remains exact and sharp, while
 	// the one-pixel transition can carry the same DoF softness as the object.

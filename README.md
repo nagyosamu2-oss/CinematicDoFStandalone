@@ -1,6 +1,6 @@
-# CinematicDoFStandalone 1.0.2
+# CinematicDoFStandalone 1.0.3
 
-> **Version 1.0.2:** `Keep Sky Sharp` protects far-depth moon pixels together with the clear-depth sky, the independent two-colour Silhouette Photo Mode is included, and transparent subjects use the full-resolution main depth consistently across display configurations. Existing presets and INIs remain compatible.
+> **Version 1.0.3:** transparent-material depth handling is stable under HDR0/HDR1, HDR0 near-blur coverage is preserved in an alpha-capable intermediate, and `Keep Sky Sharp` now prevents sky-color leakage while softly compositing thin geometry at the sky boundary. Existing presets and INIs remain compatible.
 
 ## 日本語
 
@@ -30,7 +30,7 @@ Jiaye氏のCommunity Shaders AIOを基に、Cinematic DoFを単独で利用で�
 - Address Library for SKSE Plugins
 - SKSE Menu Framework 3.8.0（ゲーム内UIを使う場合のみ）
 
-ビルドはSkyrim SE／AEを対象とします。1.0.2の月保護はメイン環境、Community Shadersなし、最小環境、`bUse64bitsHDRRenderTarget=0`の最小環境で実ゲーム確認済みです。1.7.104対応とAddress Library v5形式は、1.0.0で検証済みの経路を維持します。Community Shadersは不要です。併用する場合は、二重適用を避けるためCommunity Shaders側のDepth of FieldをOFFにしてください。
+ビルドはSkyrim SE／AEを対象とします。1.0.3の透過・HDR0・空境界処理はメイン環境と`bUse64bitsHDRRenderTarget=0`の最小環境で実ゲーム確認済みです。1.7.104対応とAddress Library v5形式は、1.0.0で検証済みの経路を維持します。Community Shadersは不要です。併用する場合は、二重適用を避けるためCommunity Shaders側のDepth of FieldをOFFにしてください。
 
 人物追従中は、Community ShadersやHDR設定にかかわらず、画面上の人物範囲と実際の深度を組み合わせた共通の人物保護を使用します。接写時に深度を無視して頭部を強制保護する処理は使用せず、首周りや画面端の背景を人物として保護しないようにします。Community Shaders併用時はHDR設定にかかわらず、有効な人物追従中だけ、保存値を変更せず手前ピント範囲の実効値を最低0.17 mにします。非人物の追従対象には適用されません。DoFの距離判定には常にフル解像度のメイン深度を使用し、Community Shadersの有無やSAO・SSR・64-bit HDR設定によって別の深度へ切り替えません。
 
@@ -94,7 +94,7 @@ SKSE Menu Frameworkを導入している場合、ゲーム中にF1を押し、`C
 ### 補足
 
 - 1人称で通常プレイする場合は、詳細設定の「一人称の手前ぼかし」をOFFにすると武器や手元が鮮明になります。
-- 「空を鮮明に保つ」は未描画の深度から空を判定し、同じスイッチで遠端深度の月も保護します。既存INIや既存プリセットにこの設定がない場合はOFFとして読み込み、従来どおり空と月をぼかします。配布プリセットは必要な枠だけ個別にONを指定できます。
+- 「空を鮮明に保つ」は未描画の深度から空を判定し、同じスイッチで遠端深度の月も保護します。空色を山・建造物・樹木へ運ばず、空との境界だけを局所被覆率で滑らかに合成します。既存INIや既存プリセットにこの設定がない場合はOFFとして読み込みます。
 - シルエット撮影モードは現在のメイン深度だけで前景／背景を分類します。水面、月、半透明物、パーティクルは、そのフレームでメイン深度へ書き込まれたかどうかに従います。
 - 「絞り形状ボケ」は初期状態でOFFです。ONにすると、強くピンぼけした明るい点が設定した絞り形状に近づきます。「明るいボケの強調」は、ぼかし平均で薄まる前の明点へ近づける量を調整します。元映像の明点を超える無制限な発光を追加する機能ではありません。
 - 非常に大きなボケを低い「ぼかし品質」で描画すると、サンプル密度不足によりボケが輪や点へ分裂して見える場合があります。これは既知の制限です。必要に応じて品質を上げるか、最大ぼかしを弱めてください。
@@ -130,7 +130,7 @@ CinematicDoFStandalone is an SKSE plugin that makes Cinematic DoF available as a
 - Address Library for SKSE Plugins
 - SKSE Menu Framework 3.8.0 only if you want the in-game UI
 
-The build targets Skyrim SE and AE. Version 1.0.2's moon protection was tested in game with the main setup, without Community Shaders, in a minimal setup, and in that minimal setup with `bUse64bitsHDRRenderTarget=0`. Skyrim 1.7.104 support and the Address Library v5 path retain the route validated for version 1.0.0. Community Shaders is optional. If it is installed, disable its Depth of Field effect to avoid applying two DoF effects at once.
+The build targets Skyrim SE and AE. Version 1.0.3's transparency, HDR0, and sky-boundary changes were tested in game with the main setup and a minimal setup using `bUse64bitsHDRRenderTarget=0`. Skyrim 1.7.104 support and the Address Library v5 path retain the route validated for version 1.0.0. Community Shaders is optional. If it is installed, disable its Depth of Field effect to avoid applying two DoF effects at once.
 
 While an actor is tracked, one subject-protection path combines the projected actor area with measured depth regardless of Community Shaders or HDR settings. It does not use the former close-up head override that ignored depth, preventing the projected head circle from protecting neck gaps or edge-of-frame background. With Community Shaders, a valid tracked actor receives an effective near-focus floor of 0.17 m regardless of the HDR setting, without changing the saved value. Non-actor targets do not receive it. DoF distance classification always uses the full-resolution main depth and does not switch to another depth buffer based on Community Shaders, SAO, SSR, or 64-bit HDR settings.
 
@@ -183,7 +183,7 @@ When updating from an older version, Custom 1 and Custom 2 keep their original n
 ### Notes
 
 - For normal first-person play, disable `First-Person Near Blur` in Advanced Settings to keep weapons and hands sharp.
-- `Keep Sky Sharp` identifies the sky from unwritten depth and protects far-depth moon pixels through the same switch. Existing INIs and presets without this setting load it as disabled, retaining the original blurred sky and moon. Bundled presets can explicitly opt in per slot.
+- `Keep Sky Sharp` identifies sky from unwritten depth and protects far-depth moon pixels through the same switch. It rejects sky-color leakage into geometry and uses local coverage for a soft one-pixel sky boundary. Existing INIs and presets without the setting load it as disabled.
 - Silhouette Photo Mode classifies foreground/background solely from the current main depth. Water, moons, transparent objects, and particles follow whether they wrote main depth in that frame.
 - `Aperture Bokeh` is off by default. When enabled, strongly defocused bright points take on the selected aperture shape. `Highlight Boost` controls how far the blurred result moves toward the brightest eligible shaped sample. It does not add unrestricted brightness beyond the sampled source highlight.
 - Very large blur discs rendered at low `Blur Quality` can separate into visible rings or points because the gather has insufficient sample density. This is a known limitation. Raise quality or reduce maximum blur if needed.

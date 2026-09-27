@@ -1,7 +1,6 @@
 #include "DoFRenderer.h"
 
 #include "ShaderCompiler.h"
-#include "RE/B/BSVisit.h"
 
 namespace
 {
@@ -42,21 +41,10 @@ namespace
 		float headGuardRadius;
 		std::uint32_t keepSkySharp;
 		Float2 targetGuardAxis;
-		std::uint32_t transparencyDiagnosticEnabled;
-		float transparencyDeltaThreshold;
-		std::array<float, 4> transparencyCaptureRegion;
-		std::uint32_t transparencySubjectGuardEnabled;
-		Float2 transparencySubjectGuardCenter;
-		float transparencySubjectDepthMeters;
-		Float2 transparencySubjectGuardRadius;
-		Float2 transparencySubjectGuardAxis;
-		std::uint32_t transparencyCandidateBoundCount;
-		std::uint32_t playerGeometryBoundCount;
-		std::array<float, 2> transparencyGeometryPadding;
-		std::array<std::array<float, 4>, 32> transparencyCandidateBounds;
-		std::array<std::array<float, 4>, 32> playerGeometryBounds;
+		std::uint32_t padding4;
+		std::uint32_t padding5;
 	};
-	static_assert(sizeof(DoFConstants) == 1232);
+	static_assert(sizeof(DoFConstants) == 144);
 
 	struct alignas(16) SharedConstants
 	{
@@ -202,7 +190,6 @@ namespace
 	constexpr float kGameUnitToMeters = 0.01428F;
 	constexpr float kCommunityShadersActorNearFocusMinimumMeters = 0.17F;
 	constexpr float kStandaloneNearFocusMinimumMeters = 0.15F;
-	constexpr std::uint32_t kInteriorTransparencyRenderFlags = 0x45U;
 
 	RE::NiCamera* FindActiveNiCamera(RE::NiAVObject* a_object)
 	{
@@ -305,54 +292,6 @@ bool CDoF::DoFRenderer::CreateTexture(
 	return true;
 }
 
-bool CDoF::DoFRenderer::EnsureTransparencyCapture(
-	ID3D11Device* a_device,
-	const D3D11_TEXTURE2D_DESC& a_sourceDescription)
-{
-	if (transparencyCapture_.device == a_device &&
-		transparencyCapture_.width == a_sourceDescription.Width &&
-		transparencyCapture_.height == a_sourceDescription.Height &&
-		transparencyCapture_.format == a_sourceDescription.Format &&
-		transparencyCapture_.before.resource && transparencyCapture_.after.resource) {
-		return true;
-	}
-
-	transparencyCapture_ = {};
-	if (!a_device || a_sourceDescription.SampleDesc.Count != 1 ||
-		a_sourceDescription.ArraySize != 1 || a_sourceDescription.MipLevels != 1) {
-		return false;
-	}
-
-	auto description = a_sourceDescription;
-	description.Usage = D3D11_USAGE_DEFAULT;
-	description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	description.CPUAccessFlags = 0;
-	description.MiscFlags = 0;
-
-	const auto createSnapshot = [&](Texture& a_texture) {
-		if (Failed(a_device->CreateTexture2D(
-				&description, nullptr, a_texture.resource.ReleaseAndGetAddressOf()),
-			"Create transparency snapshot texture")) {
-			return false;
-		}
-		return !Failed(a_device->CreateShaderResourceView(
-			a_texture.resource.Get(), nullptr, a_texture.srv.ReleaseAndGetAddressOf()),
-			"Create transparency snapshot SRV");
-	};
-
-	if (!createSnapshot(transparencyCapture_.before) ||
-		!createSnapshot(transparencyCapture_.after)) {
-		transparencyCapture_ = {};
-		return false;
-	}
-
-	transparencyCapture_.device = a_device;
-	transparencyCapture_.width = a_sourceDescription.Width;
-	transparencyCapture_.height = a_sourceDescription.Height;
-	transparencyCapture_.format = a_sourceDescription.Format;
-	return true;
-}
-
 bool CDoF::DoFRenderer::CreateConstantBuffer(
 	ID3D11Device* a_device,
 	std::uint32_t a_size,
@@ -408,7 +347,7 @@ bool CDoF::DoFRenderer::CompileShaders(ID3D11Device* a_device)
 			return false;
 		}
 	}
-	spdlog::info("Compiled all 16 depth-of-field compute passes (CoC-aware gather test 2)");
+	spdlog::info("Compiled all 15 depth-of-field compute passes (near balanced-perimeter kernel v15)");
 	return true;
 }
 
@@ -792,102 +731,6 @@ std::optional<CDoF::DoFRenderer::TargetFocusSample> CDoF::DoFRenderer::GetTarget
 				result.guardAxis = { headX - centreX, headY - centreY };
 			}
 		}
-
-		// Test23 separates a failed alpha classification from a failed scenegraph
-		// traversal. Project every visible player geometry, then independently mark
-		// candidates using both classic NiAlphaProperty and shader/material hints.
-		if (a_target->IsPlayer()) {
-			if (const auto object3D = a_target->Get3D()) {
-				RE::BSVisit::TraverseScenegraphGeometries(
-					object3D,
-					[&](RE::BSGeometry* a_geometry) {
-						if (!a_geometry || a_geometry->GetAppCulled()) {
-							return RE::BSVisit::BSVisitControl::kContinue;
-						}
-
-						const auto& runtimeData = a_geometry->GetGeometryRuntimeData();
-						const auto alphaProperty = runtimeData.alphaProperty.get();
-						const auto classicAlpha = alphaProperty &&
-							(alphaProperty->GetAlphaBlending() || alphaProperty->GetAlphaTesting());
-						const auto shaderProperty = runtimeData.shaderProperty.get();
-						bool shaderAlpha = false;
-						if (shaderProperty) {
-							using Flag = RE::BSShaderProperty::EShaderPropertyFlag;
-							shaderAlpha = shaderProperty->alpha < 0.999F ||
-								shaderProperty->flags.all(Flag::kVertexAlpha) ||
-								shaderProperty->flags.all(Flag::kGrayscaleToPaletteAlpha) ||
-								shaderProperty->flags.all(Flag::kTempRefraction) ||
-								shaderProperty->flags.all(Flag::kRefraction) ||
-								shaderProperty->flags.all(Flag::kScreendoorAlphaFade) ||
-								shaderProperty->flags.all(Flag::kPremultAlpha) ||
-								shaderProperty->flags.all(Flag::kNoTransparencyMultiSample);
-							if (const auto lightingProperty = a_geometry->lightingShaderProp_cast()) {
-								if (const auto material = static_cast<RE::BSLightingShaderMaterialBase*>(
-									lightingProperty->GetBaseMaterial())) {
-									shaderAlpha = shaderAlpha || material->materialAlpha < 0.999F;
-								}
-							}
-						}
-
-						const auto& bound = a_geometry->worldBound;
-						if (!std::isfinite(bound.radius) || bound.radius <= 0.1F || bound.radius > 10000.0F) {
-							return RE::BSVisit::BSVisitControl::kContinue;
-						}
-
-						const auto centre = project(bound.center);
-						if (!centre) {
-							return RE::BSVisit::BSVisitControl::kContinue;
-						}
-
-						float minX = centre->at(0);
-						float maxX = centre->at(0);
-						float minY = centre->at(1);
-						float maxY = centre->at(1);
-						const std::array offsets{
-							RE::NiPoint3{ bound.radius, 0.0F, 0.0F },
-							RE::NiPoint3{ -bound.radius, 0.0F, 0.0F },
-							RE::NiPoint3{ 0.0F, bound.radius, 0.0F },
-							RE::NiPoint3{ 0.0F, -bound.radius, 0.0F },
-							RE::NiPoint3{ 0.0F, 0.0F, bound.radius },
-							RE::NiPoint3{ 0.0F, 0.0F, -bound.radius }
-						};
-						for (const auto& offset : offsets) {
-							if (const auto point = project(bound.center + offset)) {
-								minX = std::min(minX, point->at(0));
-								maxX = std::max(maxX, point->at(0));
-								minY = std::min(minY, point->at(1));
-								maxY = std::max(maxY, point->at(1));
-							}
-						}
-
-						TransparencyGeometryBound projectedBound{
-							.center = { (minX + maxX) * 0.5F, (minY + maxY) * 0.5F },
-							.radius = {
-								std::clamp((maxX - minX) * 0.52F, 0.003F, 0.75F),
-								std::clamp((maxY - minY) * 0.52F, 0.003F, 0.75F) }
-						};
-						if (!std::isfinite(projectedBound.center[0]) || !std::isfinite(projectedBound.center[1]) ||
-							!std::isfinite(projectedBound.radius[0]) || !std::isfinite(projectedBound.radius[1])) {
-							return RE::BSVisit::BSVisitControl::kContinue;
-						}
-
-						if (result.playerGeometryBoundCount < result.playerGeometryBounds.size()) {
-							result.playerGeometryBounds[result.playerGeometryBoundCount++] = projectedBound;
-						}
-						if (classicAlpha) {
-							++result.classicAlphaGeometryCount;
-						}
-						if (shaderAlpha) {
-							++result.shaderAlphaGeometryCount;
-						}
-						if ((classicAlpha || shaderAlpha) &&
-							result.transparencyCandidateBoundCount < result.transparencyCandidateBounds.size()) {
-							result.transparencyCandidateBounds[result.transparencyCandidateBoundCount++] = projectedBound;
-						}
-						return RE::BSVisit::BSVisitControl::kContinue;
-					});
-			}
-		}
 	} else if (const auto object3D = a_target->Get3D(); object3D &&
 		std::isfinite(object3D->worldBound.radius) && object3D->worldBound.radius > 1.0F) {
 		const auto& bound = object3D->worldBound;
@@ -1056,194 +899,6 @@ void CDoF::DoFRenderer::ApplySilhouette(RE::RENDER_TARGET a_outputTarget)
 	}
 }
 
-void CDoF::DoFRenderer::RecordTransparencyCall(
-	RE::BSShaderAccumulator* a_accumulator,
-	std::uint32_t a_renderFlags)
-{
-	// Diagnostic Test12 deliberately performs no GPU copy, allocation, logging,
-	// or lock acquisition in this hot hook.  The engine invokes this path more
-	// than one thousand times per frame in the observed setup, so only compact
-	// fixed-capacity metadata is collected here and reported at the existing
-	// post-processing boundary.
-	++transparencyCallCount_;
-	if (!a_accumulator) {
-		++transparencyNullAccumulatorCount_;
-		return;
-	}
-	const auto runtimeData = a_accumulator->GetRuntimeData();
-	if (!runtimeData) {
-		++transparencyNullAccumulatorCount_;
-		return;
-	}
-
-	const auto renderMode = static_cast<std::uint32_t>(runtimeData->renderMode);
-	for (std::size_t index = 0; index < transparencyCallSignatureCount_; ++index) {
-		auto& signature = transparencyCallSignatures_[index];
-		if (signature.renderFlags != a_renderFlags ||
-			signature.renderMode != renderMode ||
-			signature.currentActive != runtimeData->currentActive ||
-			signature.firstPerson != runtimeData->firstPerson ||
-			signature.drawDecals != runtimeData->drawDecals) {
-			continue;
-		}
-		++signature.callCount;
-		signature.minimumPass = std::min(signature.minimumPass, runtimeData->currentPass);
-		signature.maximumPass = std::max(signature.maximumPass, runtimeData->currentPass);
-		signature.minimumBucket = std::min(signature.minimumBucket, runtimeData->currentBucket);
-		signature.maximumBucket = std::max(signature.maximumBucket, runtimeData->currentBucket);
-		signature.multipleAccumulators |=
-			signature.firstAccumulator != reinterpret_cast<std::uintptr_t>(a_accumulator);
-		return;
-	}
-
-	if (transparencyCallSignatureCount_ >= transparencyCallSignatures_.size()) {
-		++transparencyCallOverflowCount_;
-		return;
-	}
-	auto& signature = transparencyCallSignatures_[transparencyCallSignatureCount_++];
-	signature = {
-		.renderFlags = a_renderFlags,
-		.renderMode = renderMode,
-		.minimumPass = runtimeData->currentPass,
-		.maximumPass = runtimeData->currentPass,
-		.minimumBucket = runtimeData->currentBucket,
-		.maximumBucket = runtimeData->currentBucket,
-		.callCount = 1,
-		.firstAccumulator = reinterpret_cast<std::uintptr_t>(a_accumulator),
-		.currentActive = runtimeData->currentActive,
-		.firstPerson = runtimeData->firstPerson,
-		.drawDecals = runtimeData->drawDecals,
-		.multipleAccumulators = false
-	};
-}
-
-void CDoF::DoFRenderer::CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags)
-{
-	// Test23 retains the only call that produced a measurable signal in both
-	// locations. Test16 and Test17 ruled out both exterior flags=0x0C calls.
-	// Reject unrelated hot-path calls before taking the renderer mutex.
-	if (a_renderFlags != kInteriorTransparencyRenderFlags) {
-		return;
-	}
-
-	std::scoped_lock lock(mutex_);
-	if (!settings_.enabled || silhouetteSettings_.enabled || permanentlyDisabled_) {
-		transparencyCapture_.pending = false;
-		transparencyCapture_.valid = false;
-		return;
-	}
-	const auto player = RE::PlayerCharacter::GetSingleton();
-	const auto cell = player ? player->GetParentCell() : nullptr;
-	if (!cell) {
-		return;
-	}
-	const auto interior = cell->IsInteriorCell();
-	const auto selectedRenderFlags = kInteriorTransparencyRenderFlags;
-	if (transparencyCapture_.pending ||
-		transparencyCapture_.valid) {
-		return;
-	}
-
-	try {
-		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		if (!renderer) {
-			return;
-		}
-		auto& rendererData = renderer->GetRuntimeData();
-		auto device = reinterpret_cast<ID3D11Device*>(rendererData.forwarder);
-		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
-		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
-		if (!device || !context || !mainTarget.texture) {
-			return;
-		}
-
-		D3D11_TEXTURE2D_DESC description{};
-		mainTarget.texture->GetDesc(&description);
-		if (!EnsureTransparencyCapture(device, description)) {
-			if (!loggedSelectedTransparencyCaptureFailure_) {
-				loggedSelectedTransparencyCaptureFailure_ = true;
-				spdlog::warn("Test23 transparency capture is unavailable for the main target");
-			}
-			return;
-		}
-		const auto renderArea = GetActiveRenderArea(context, description);
-		transparencyCapture_.renderLeft = renderArea.left;
-		transparencyCapture_.renderTop = renderArea.top;
-		transparencyCapture_.renderWidth = renderArea.width;
-		transparencyCapture_.renderHeight = renderArea.height;
-
-		context->CopyResource(transparencyCapture_.before.resource.Get(), mainTarget.texture);
-		transparencyCapture_.pending = true;
-	} catch (...) {
-		transparencyCapture_.pending = false;
-		transparencyCapture_.valid = false;
-		if (!loggedSelectedTransparencyCaptureFailure_) {
-			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn(
-				"Test23 transparency capture failed before {} flags=0x{:02X}",
-				interior ? "INTERIOR" : "EXTERIOR",
-				selectedRenderFlags);
-		}
-	}
-}
-
-void CDoF::DoFRenderer::CaptureSelectedTransparencyAfter()
-{
-	std::scoped_lock lock(mutex_);
-	if (!transparencyCapture_.pending) {
-		return;
-	}
-	transparencyCapture_.pending = false;
-
-	try {
-		const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
-		if (!renderer) {
-			return;
-		}
-		auto& rendererData = renderer->GetRuntimeData();
-		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
-		auto& mainTarget = rendererData.renderTargets[RE::RENDER_TARGETS::kMAIN];
-		if (!context || !mainTarget.texture) {
-			return;
-		}
-
-		D3D11_TEXTURE2D_DESC description{};
-		mainTarget.texture->GetDesc(&description);
-		const auto renderArea = GetActiveRenderArea(context, description);
-		if (description.Width != transparencyCapture_.width ||
-			description.Height != transparencyCapture_.height ||
-			description.Format != transparencyCapture_.format ||
-			description.SampleDesc.Count != 1 ||
-			renderArea.left != transparencyCapture_.renderLeft ||
-			renderArea.top != transparencyCapture_.renderTop ||
-			renderArea.width != transparencyCapture_.renderWidth ||
-			renderArea.height != transparencyCapture_.renderHeight) {
-			return;
-		}
-
-		context->CopyResource(transparencyCapture_.after.resource.Get(), mainTarget.texture);
-		transparencyCapture_.valid = true;
-		if (!loggedSelectedTransparencyCapture_) {
-			loggedSelectedTransparencyCapture_ = true;
-			spdlog::info(
-				"Test23 captured transparency snapshots (interior/exterior flags=0x45, player shader-geometry classifier; texture {}x{}, active region ({}, {}) {}x{}, format {})",
-				description.Width,
-				description.Height,
-				renderArea.left,
-				renderArea.top,
-				renderArea.width,
-				renderArea.height,
-				static_cast<std::uint32_t>(description.Format));
-		}
-	} catch (...) {
-		transparencyCapture_.valid = false;
-		if (!loggedSelectedTransparencyCaptureFailure_) {
-			loggedSelectedTransparencyCaptureFailure_ = true;
-			spdlog::warn("Test23 transparency capture failed after the selected call");
-		}
-	}
-}
-
 void CDoF::DoFRenderer::ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget)
 {
 	std::scoped_lock lock(mutex_);
@@ -1256,55 +911,6 @@ void CDoF::DoFRenderer::ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarge
 void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 {
 	std::scoped_lock lock(mutex_);
-	const auto player = RE::PlayerCharacter::GetSingleton();
-	const auto cell = player ? player->GetParentCell() : nullptr;
-	if (cell && transparencyCallCount_ > 0) {
-		const auto interior = cell->IsInteriorCell();
-		if (!transparencyLocationInitialized_ ||
-			transparencyPreviousLocationInterior_ != interior) {
-			transparencyLocationInitialized_ = true;
-			transparencyPreviousLocationInterior_ = interior;
-			transparencyStableLocationFrames_ = 1;
-		} else {
-			++transparencyStableLocationFrames_;
-		}
-
-		auto& locationAlreadyLogged = interior ?
-			loggedInteriorTransparencySignatures_ : loggedExteriorTransparencySignatures_;
-		if (!locationAlreadyLogged && transparencyStableLocationFrames_ >= 30) {
-			locationAlreadyLogged = true;
-			spdlog::info(
-				"Transparency diagnostic Test12 {} frame: calls={}, signatures={}, overflow={}, unavailable-accumulator={}, cell=0x{:08X}",
-				interior ? "INTERIOR" : "EXTERIOR",
-				transparencyCallCount_,
-				transparencyCallSignatureCount_,
-				transparencyCallOverflowCount_,
-				transparencyNullAccumulatorCount_,
-				cell->GetFormID());
-			for (std::size_t index = 0; index < transparencyCallSignatureCount_; ++index) {
-				const auto& signature = transparencyCallSignatures_[index];
-				spdlog::info(
-					"Test12 {} signature {:02}: flags=0x{:08X}, mode=0x{:02X}, active={}, first-person={}, decals={}, calls={}, pass={}..{}, bucket={}..{}, multiple-accumulators={}",
-					interior ? "INTERIOR" : "EXTERIOR",
-					index,
-					signature.renderFlags,
-					signature.renderMode,
-					signature.currentActive,
-					signature.firstPerson,
-					signature.drawDecals,
-					signature.callCount,
-					signature.minimumPass,
-					signature.maximumPass,
-					signature.minimumBucket,
-					signature.maximumBucket,
-					signature.multipleAccumulators);
-			}
-		}
-	}
-	transparencyCallSignatureCount_ = 0;
-	transparencyCallCount_ = 0;
-	transparencyCallOverflowCount_ = 0;
-	transparencyNullAccumulatorCount_ = 0;
 	// Silhouette colors are display-space choices.  Apply them only after the
 	// game's image-space pass so exposure, tonemapping, and color grading cannot
 	// tint an exact white/black palette.  Normal DoF remains on this HDR-side path.
@@ -1455,10 +1061,6 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				GetModuleHandleW(L"CommunityShaders.dll") != nullptr;
 			const auto actualHdr64Target =
 				inputDescription.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
-			const auto lowSpecDepthSettings =
-				(runtimeSaoEnabled && !*runtimeSaoEnabled) ||
-				(runtimeReflectionsEnabled && !*runtimeReflectionsEnabled) ||
-				(runtimeHdr64Enabled && !*runtimeHdr64Enabled);
 			// The actual target format remains useful diagnostics, but Community Shaders
 			// normally supplies its own non-64-bit target even when the game setting is on.
 			// Do not treat that normal format as a reason to enable a visible subject mask.
@@ -1467,11 +1069,6 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 			const auto standaloneTargetGuardSetting =
 				(runtimeReflectionsEnabled && !*runtimeReflectionsEnabled) ||
 				standaloneHdrTargetGuardSetting;
-			const auto lowSpecDepthFallbackRequested = communityShadersLoaded && lowSpecDepthSettings;
-			// Test24 compares Skyrim's full-resolution main depth against ReShade's
-			// selected 2560x1440 D24S8 resource.  Keep the normal fallback decision in
-			// the log, but deliberately use kMAIN for this diagnostic build.
-			useLowSpecDepthFallback_ = false;
 			useStandaloneNonActorTargetGuard_ =
 				!communityShadersLoaded && standaloneTargetGuardSetting;
 			// Visual A/B testing selected the assisted Test 7A result: when Community
@@ -1482,67 +1079,16 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				!communityShadersLoaded && standaloneHdrTargetGuardSetting;
 			depthPathChecked_ = true;
 			spdlog::info(
-				"Test24 display depth settings at first frame: SAO={}, SSR={}, 64-bit HDR={}; main target format={} (actual 64-bit HDR target={}); Community Shaders={}; low-spec fallback requested={}; forced standard main depth path; tracked-actor depth guard=unified; standalone non-actor guard={}; Community Shaders actor near-focus assist={}; standalone HDR-off near-focus assist={}",
+				"Display depth settings at first frame: SAO={}, SSR={}, 64-bit HDR={}; main target format={} (actual 64-bit HDR target={}); Community Shaders={}; selected main depth path; tracked-actor depth guard=unified; standalone non-actor guard={}; Community Shaders actor near-focus assist={}; standalone HDR-off near-focus assist={}",
 				DescribeDisplayBool(runtimeSaoEnabled),
 				DescribeDisplayBool(runtimeReflectionsEnabled),
 				DescribeDisplayBool(runtimeHdr64Enabled),
 				static_cast<std::uint32_t>(inputDescription.Format),
 				actualHdr64Target ? "yes" : "no",
 				communityShadersLoaded ? "loaded" : "not loaded",
-				lowSpecDepthFallbackRequested ? "yes" : "no",
 				useStandaloneNonActorTargetGuard_ ? "enabled" : "disabled",
 				useCommunityShadersActorNearFocusAssist_ ? "enabled" : "disabled",
 				useStandaloneNearFocusAssist_ ? "enabled" : "disabled");
-
-			const auto logDepthResource = [](std::string_view a_name, ID3D11ShaderResourceView* a_view) {
-				if (!a_view) {
-					spdlog::info("Test24 {} depth resource is unavailable", a_name);
-					return;
-				}
-				ComPtr<ID3D11Resource> resource;
-				a_view->GetResource(resource.GetAddressOf());
-				ComPtr<ID3D11Texture2D> texture;
-				if (!resource || FAILED(resource.As(&texture)) || !texture) {
-					spdlog::info(
-						"Test24 {} depth: resource=0x{:016X}, SRV=0x{:016X}, not a Texture2D",
-						a_name,
-						reinterpret_cast<std::uintptr_t>(resource.Get()),
-						reinterpret_cast<std::uintptr_t>(a_view));
-					return;
-				}
-				D3D11_TEXTURE2D_DESC description{};
-				texture->GetDesc(&description);
-				spdlog::info(
-					"Test24 {} depth: resource=0x{:016X}, SRV=0x{:016X}, {}x{}, format={}, samples={}, bindFlags=0x{:X}",
-					a_name,
-					reinterpret_cast<std::uintptr_t>(resource.Get()),
-					reinterpret_cast<std::uintptr_t>(a_view),
-					description.Width,
-					description.Height,
-					static_cast<std::uint32_t>(description.Format),
-					description.SampleDesc.Count,
-					description.BindFlags);
-			};
-			logDepthResource("main", mainDepth);
-			logDepthResource(
-				"post-z-prepass-copy",
-				depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV);
-			if (lowSpecDepthSettings && !communityShadersLoaded) {
-				spdlog::warn(
-					"Low-spec depth settings were detected, but Community Shaders was not loaded; preserving the standard depth path");
-			}
-		}
-
-		if (useLowSpecDepthFallback_) {
-			auto fallbackDepth =
-				depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
-			if (IsCompatibleDepth(fallbackDepth, inputDescription)) {
-				depth = fallbackDepth;
-			} else if (!loggedDepthFallbackUnavailable_) {
-				loggedDepthFallbackUnavailable_ = true;
-				spdlog::warn(
-					"Low-spec depth fallback was requested but its depth texture was unavailable or incompatible; using standard depth");
-			}
 		}
 
 		if (targetFocusMode == TargetFocusMode::kDialogue && !loggedRenderAreaDiagnostics_) {
@@ -1601,31 +1147,6 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				elapsed.count());
 			return;
 		}
-		const auto transparencyDiagnosticValid =
-			transparencyCapture_.valid &&
-			transparencyCapture_.width == inputDescription.Width &&
-			transparencyCapture_.height == inputDescription.Height &&
-			transparencyCapture_.format == inputDescription.Format &&
-			transparencyCapture_.before.srv && transparencyCapture_.after.srv;
-		transparencyCapture_.valid = transparencyDiagnosticValid;
-		const auto transparencySubjectFocus =
-			transparencyDiagnosticValid ? GetPlayerTargetFocus() : std::nullopt;
-		const auto* transparencySubjectGuard =
-			transparencySubjectFocus && transparencySubjectFocus->guardValid ?
-				std::addressof(*transparencySubjectFocus) : nullptr;
-		if (transparencySubjectGuard && !loggedTransparencySubjectGuard_) {
-			loggedTransparencySubjectGuard_ = true;
-			spdlog::info(
-				"Test23 player shader-geometry classifier activated (interior/exterior=0x45; candidate bounds {}; all geometry bounds {}; classic alpha geometries {}; shader/material alpha geometries {}; broad centre {:.3f}, {:.3f}; radius {:.3f}, {:.3f})",
-				transparencySubjectGuard->transparencyCandidateBoundCount,
-				transparencySubjectGuard->playerGeometryBoundCount,
-				transparencySubjectGuard->classicAlphaGeometryCount,
-				transparencySubjectGuard->shaderAlphaGeometryCount,
-				transparencySubjectGuard->guardCenter[0],
-				transparencySubjectGuard->guardCenter[1],
-				transparencySubjectGuard->guardRadius[0],
-				transparencySubjectGuard->guardRadius[1]);
-		}
 		ID3D11RenderTargetView* restoreRTV = currentRTV.Get();
 		OutputMergerRestore restore{ context, restoreRTV, currentDSV.Get() };
 		context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -1680,9 +1201,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 			inputDescription.Width,
 			inputDescription.Height,
 			renderArea.left,
-			renderArea.top,
-			transparencySubjectGuard);
-		transparencyCapture_.valid = false;
+			renderArea.top);
 		const D3D11_BOX outputBox{
 			0U,
 			0U,
@@ -1724,14 +1243,13 @@ void CDoF::DoFRenderer::Dispatch(
 	std::uint32_t a_inputWidth,
 	std::uint32_t a_inputHeight,
 	std::uint32_t a_renderLeft,
-	std::uint32_t a_renderTop,
-	const TargetFocusSample* a_transparencySubjectGuard)
+	std::uint32_t a_renderTop)
 {
 	const auto effectiveNearFocusRangeMeters =
 		a_targetNearFocusMinimumMeters > 0.0F ?
 			std::max(a_settings.nearFocusRangeMeters, a_targetNearFocusMinimumMeters) :
 			a_settings.nearFocusRangeMeters;
-	DoFConstants dofData{
+	const DoFConstants dofData{
 		.transitionSpeed = resources_.focusInitialized ? a_settings.transitionSpeed : 1.0F,
 		.focusCoordinate = { a_settings.focusX, a_settings.focusY },
 		.manualFocusPlane = a_settings.manualFocusMeters / 1000.0F,
@@ -1766,44 +1284,9 @@ void CDoF::DoFRenderer::Dispatch(
 		.keepSkySharp = a_settings.keepSkySharp ? 1U : 0U,
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
-		// Test24 restores the normal DoF image so the forced main-depth path can be
-		// judged directly.  Test23's capture remains available only for logging.
-		.transparencyDiagnosticEnabled = 0U,
-		.transparencyDeltaThreshold = 0.00025F,
-		.transparencyCaptureRegion = {
-			static_cast<float>(transparencyCapture_.renderLeft),
-			static_cast<float>(transparencyCapture_.renderTop),
-			static_cast<float>(transparencyCapture_.renderWidth),
-			static_cast<float>(transparencyCapture_.renderHeight) },
-		.transparencySubjectGuardEnabled = a_transparencySubjectGuard ? 1U : 0U,
-		.transparencySubjectGuardCenter = a_transparencySubjectGuard ?
-			Float2{ a_transparencySubjectGuard->guardCenter[0], a_transparencySubjectGuard->guardCenter[1] } :
-			Float2{ 0.5F, 0.5F },
-		.transparencySubjectDepthMeters = a_transparencySubjectGuard ?
-			a_transparencySubjectGuard->distanceMeters : 0.0F,
-		.transparencySubjectGuardRadius = a_transparencySubjectGuard ?
-			Float2{ a_transparencySubjectGuard->guardRadius[0], a_transparencySubjectGuard->guardRadius[1] } :
-			Float2{},
-		.transparencySubjectGuardAxis = a_transparencySubjectGuard ?
-			Float2{ a_transparencySubjectGuard->guardAxis[0], a_transparencySubjectGuard->guardAxis[1] } :
-			Float2{},
-		.transparencyCandidateBoundCount = a_transparencySubjectGuard ?
-			a_transparencySubjectGuard->transparencyCandidateBoundCount : 0U,
-		.playerGeometryBoundCount = a_transparencySubjectGuard ?
-			a_transparencySubjectGuard->playerGeometryBoundCount : 0U
+		.padding4 = 0U,
+		.padding5 = 0U
 	};
-	if (a_transparencySubjectGuard) {
-		for (std::size_t index = 0; index < a_transparencySubjectGuard->transparencyCandidateBoundCount; ++index) {
-			const auto& bound = a_transparencySubjectGuard->transparencyCandidateBounds[index];
-			dofData.transparencyCandidateBounds[index] = {
-				bound.center[0], bound.center[1], bound.radius[0], bound.radius[1] };
-		}
-		for (std::size_t index = 0; index < a_transparencySubjectGuard->playerGeometryBoundCount; ++index) {
-			const auto& bound = a_transparencySubjectGuard->playerGeometryBounds[index];
-			dofData.playerGeometryBounds[index] = {
-				bound.center[0], bound.center[1], bound.radius[0], bound.radius[1] };
-		}
-	}
 	const SharedConstants sharedData{
 		.cameraData = GetCameraData(),
 		.bufferDimensions = {
@@ -1830,7 +1313,7 @@ void CDoF::DoFRenderer::Dispatch(
 	a_context->CSSetConstantBuffers(5, 1, &sharedCB);
 	a_context->CSSetSamplers(0, 1, &sampler);
 
-	std::array<ID3D11ShaderResourceView*, 14> srvs{};
+	std::array<ID3D11ShaderResourceView*, 12> srvs{};
 	std::array<ID3D11UnorderedAccessView*, 3> uavs{};
 	const auto resetViews = [&]() {
 		srvs.fill(nullptr);
@@ -1878,10 +1361,9 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[0] = a_color;
 	srvs[1] = resources_.previousFocus.srv.Get();
 	srvs[2] = a_depth;
-	// Keep autofocus and all ordinary DoF calculations on the selected depth
-	// path, but classify sky from the current main depth. Community Shaders'
-	// low-spec fallback is copied before water renders, so using it for both
-	// purposes incorrectly classifies distant water as clear sky.
+	// Keep autofocus, ordinary DoF calculations, and sky classification on the
+	// full-resolution main depth so transparent subjects retain the same depth
+	// behavior across Community Shaders and display-quality configurations.
 	srvs[11] = a_skyMaskDepth;
 	uavs[2] = resources_.coc.uav.Get();
 	bindAndDispatch(shaders_.calculateCoC.Get(), fullWidth, fullHeight);
@@ -1988,17 +1470,9 @@ void CDoF::DoFRenderer::Dispatch(
 	bindAndDispatch(shaders_.postSmoothing1.Get(), fullWidth, fullHeight);
 	resetViews();
 	srvs[0] = resources_.postSmooth.srv.Get();
-	// Test6 compares each transparency-pass pixel with nearby opaque scene
-	// depth. The final diagnostic pass therefore needs the same full-resolution
-	// depth input as the CoC pass in addition to its existing CoC texture.
-	srvs[2] = a_depth;
 	srvs[3] = resources_.coc.srv.Get();
 	srvs[7] = resources_.postSmooth2.srv.Get();
 	srvs[11] = a_skyMaskDepth;
-	if (transparencyCapture_.valid) {
-		srvs[12] = transparencyCapture_.before.srv.Get();
-		srvs[13] = transparencyCapture_.after.srv.Get();
-	}
 	uavs[0] = resources_.output.uav.Get();
 	bindAndDispatch(shaders_.postSmoothing2AndFocusing.Get(), fullWidth, fullHeight);
 	resetViews();

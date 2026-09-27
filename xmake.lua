@@ -22,13 +22,10 @@ set_config("skse_xbyak", false)
 
 includes("lib/commonlibsse-ng")
 
-add_requires("microsoft-detours")
-
 target("CinematicDoFStandalone", function()
     set_kind("shared")
     set_targetdir("work/artifacts/" .. plugin_version)
     add_deps("commonlibsse-ng")
-    add_packages("microsoft-detours")
     add_rules("commonlibsse-ng.plugin", {
         name = "CinematicDoFStandalone",
         author = "kota (@kotaSkyrim) / developed with OpenAI Codex",

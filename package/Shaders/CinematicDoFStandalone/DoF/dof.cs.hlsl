@@ -133,8 +133,6 @@ Texture2D<float4> TexFarGatherColor1 : register(t8);
 Texture2D<float4> TexFarGatherColor2 : register(t9);
 Texture2D<float4> TexFarGatherColor3 : register(t10);
 Texture2D<float> SkyMaskDepthTexture : register(t11);
-Texture2D<float4> TransparencyBeforeTexture : register(t12);
-Texture2D<float4> TransparencyAfterTexture : register(t13);
 
 cbuffer DoFCB : register(b1)
 {
@@ -167,19 +165,7 @@ cbuffer DoFCB : register(b1)
 	float HeadGuardRadius;
 	uint KeepSkySharp;
 	float2 TargetGuardAxis;
-	uint TransparencyDiagnosticEnabled;
-	float TransparencyDeltaThreshold;
-	float4 TransparencyCaptureRegion;
-	uint TransparencySubjectGuardEnabled;
-	float2 TransparencySubjectGuardCenter;
-	float TransparencySubjectDepthMeters;
-	float2 TransparencySubjectGuardRadius;
-	float2 TransparencySubjectGuardAxis;
-	uint TransparencyCandidateBoundCount;
-	uint PlayerGeometryBoundCount;
-	float2 TransparencyGeometryPadding;
-	float4 TransparencyCandidateBounds[32];
-	float4 PlayerGeometryBounds[32];
+	uint2 pad4;
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -650,208 +636,6 @@ float RefineFarCoCAtFocusedBoundary(FocusInfo focusInfo, uint2 renderPixel, floa
 	}
 
 	return bestCoC;
-}
-
-uint2 GetTransparencyCapturePixel(uint2 renderPixel)
-{
-	// Transparency is captured before Community Shaders performs temporal
-	// upscaling, while this diagnostic is composed after upscaling. The backing
-	// texture keeps its display-sized allocation, but only the active internal-
-	// resolution viewport contains the current transparency pass. Remap the
-	// post-upscale output UV into that captured viewport instead of treating both
-	// stages as pixel-identical.
-	float2 renderUV = (float2(renderPixel) + 0.5f) * SharedData::BufferDim.zw;
-	float2 capturePosition =
-		TransparencyCaptureRegion.xy + renderUV * TransparencyCaptureRegion.zw;
-	uint2 captureMinimum = uint2(TransparencyCaptureRegion.xy);
-	uint2 captureMaximum = captureMinimum +
-		max(uint2(1, 1), uint2(TransparencyCaptureRegion.zw)) - 1;
-	return clamp(uint2(capturePosition), captureMinimum, captureMaximum);
-}
-
-float GetTransparencyDeltaAtRenderPixel(uint2 renderPixel)
-{
-	uint2 capturePixel = GetTransparencyCapturePixel(renderPixel);
-	float3 beforeColor = TransparencyBeforeTexture[capturePixel].rgb;
-	float3 afterColor = TransparencyAfterTexture[capturePixel].rgb;
-	float3 difference = abs(afterColor - beforeColor);
-	return max(difference.r, max(difference.g, difference.b));
-}
-
-float3 GetTransparencySignedRgbDeltaAtRenderPixel(uint2 renderPixel)
-{
-	uint2 capturePixel = GetTransparencyCapturePixel(renderPixel);
-	float3 beforeColor = TransparencyBeforeTexture[capturePixel].rgb;
-	float3 afterColor = TransparencyAfterTexture[capturePixel].rgb;
-	return afterColor - beforeColor;
-}
-
-bool IsOpaqueNearerAnchor(uint2 samplePixel, float centreDepth, out float sampleDepth)
-{
-	sampleDepth = GetDepthAtRenderPixel(samplePixel);
-	bool isOpaqueInCapturedPass =
-		GetTransparencyDeltaAtRenderPixel(samplePixel) < TransparencyDeltaThreshold;
-	bool isNearer = sampleDepth * 1000.0f + 0.02f < centreDepth * 1000.0f;
-	return isOpaqueInCapturedPass && isNearer;
-}
-
-bool AreForegroundAnchorDepthsCoherent(float firstDepth, float secondDepth)
-{
-	float firstMetres = firstDepth * 1000.0f;
-	float secondMetres = secondDepth * 1000.0f;
-	// Permit normal depth variation across a face/body while rejecting pairs
-	// that merely happen to touch unrelated foreground objects. The relative
-	// allowance keeps the test usable at larger camera distances.
-	float toleranceMetres = max(0.35f, 0.12f * min(firstMetres, secondMetres));
-	return abs(firstMetres - secondMetres) <= toleranceMetres;
-}
-
-int GetOpaqueForegroundDepthClusterClass(uint2 renderPixel)
-{
-	// Test8 keeps the settings-independent geometry test from Test7, but removes
-	// the overly strict requirement for matching anchors on opposite sides. A
-	// coherent pair may now occur in any directions around the pixel. This fits a
-	// veil or loose hair edge, where the visible opaque face/body often exists on
-	// only one side of the transparent pixel.
-	static const int2 offsets[24] = {
-		int2(-8, 0), int2(8, 0), int2(0, -8), int2(0, 8),
-		int2(-24, 0), int2(24, 0), int2(0, -24), int2(0, 24),
-		int2(-24, -24), int2(24, -24), int2(-24, 24), int2(24, 24),
-		int2(-56, 0), int2(56, 0), int2(0, -56), int2(0, 56),
-		int2(-56, -56), int2(56, -56), int2(-56, 56), int2(56, 56),
-		int2(-112, 0), int2(112, 0), int2(0, -112), int2(0, 112)
-	};
-
-	float centreDepth = GetDepthAtRenderPixel(renderPixel);
-	bool foundAnyAnchor = false;
-
-	[loop]
-	for (int offsetIndex = 0; offsetIndex < 24; ++offsetIndex) {
-		uint2 samplePixel = ClampFullResolutionPixel(int2(renderPixel) + offsets[offsetIndex]);
-		float sampleDepth;
-		if (!IsOpaqueNearerAnchor(samplePixel, centreDepth, sampleDepth))
-			continue;
-		foundAnyAnchor = true;
-
-		[unroll]
-		for (int previousIndex = 0; previousIndex < 24; ++previousIndex) {
-			if (previousIndex >= offsetIndex)
-				continue;
-			uint2 previousPixel = ClampFullResolutionPixel(
-				int2(renderPixel) + offsets[previousIndex]);
-			float previousDepth;
-			bool previousIsAnchor =
-				IsOpaqueNearerAnchor(previousPixel, centreDepth, previousDepth);
-			if (previousIsAnchor &&
-				AreForegroundAnchorDepthsCoherent(sampleDepth, previousDepth))
-				return 2;
-		}
-	}
-
-	return foundAnyAnchor ? 1 : 0;
-}
-
-float GetTransparencySubjectGate(float2 uv)
-{
-	if (TransparencySubjectGuardEnabled == 0)
-		return 0.0f;
-
-	float aspect = SharedData::BufferDim.x / max(SharedData::BufferDim.y, 1.0f);
-	float2 samplePoint = float2(uv.x * aspect, uv.y);
-	float2 centre = float2(TransparencySubjectGuardCenter.x * aspect, TransparencySubjectGuardCenter.y);
-	float2 axis = float2(TransparencySubjectGuardAxis.x * aspect, TransparencySubjectGuardAxis.y);
-	float axisLengthSquared = dot(axis, axis);
-
-	// Test14 deliberately gives the veil more room than the normal actor guard.
-	// Extend below the feet for the train and widen the capsule for loose cloth,
-	// while still rejecting distant foliage across the rest of the screen.
-	if (axisLengthSquared > 1e-6f)
-	{
-		// Diagnostic Test20 keeps the broad subject prefilter upright on screen.
-		// The projected head-to-feet vector acquires a large horizontal component
-		// in close, low-angle orbit-camera views even though the actor is upright.
-		// Preserve its projected length and head/feet direction, but do not rotate
-		// the diagnostic region with that perspective artefact.
-		float verticalSign = axis.y <= 0.0f ? -1.0f : 1.0f;
-		axis = float2(0.0f, verticalSign * sqrt(axisLengthSquared));
-		float2 start = centre - axis * 1.65f;
-		float2 end = centre + axis * 1.25f;
-		float2 segment = end - start;
-		float along = saturate(dot(samplePoint - start, segment) /
-			max(dot(segment, segment), 1e-6f));
-		float distanceToAxis = length(samplePoint - (start + segment * along));
-		float radius = max(TransparencySubjectGuardRadius.x * 4.0f, 0.055f);
-		return 1.0f - smoothstep(radius * 0.88f, radius, distanceToAxis);
-	}
-
-	float2 expandedRadius = max(
-		TransparencySubjectGuardRadius * float2(2.6f, 1.45f),
-		float2(0.055f, 0.09f));
-	float2 ellipse = (uv - TransparencySubjectGuardCenter) / expandedRadius;
-	return 1.0f - smoothstep(0.88f, 1.0f, length(ellipse));
-}
-
-float GetTransparencyActorCoreGate(float2 uv)
-{
-	if (TransparencySubjectGuardEnabled == 0)
-		return 0.0f;
-
-	float aspect = SharedData::BufferDim.x / max(SharedData::BufferDim.y, 1.0f);
-	float2 samplePoint = float2(uv.x * aspect, uv.y);
-	float2 centre = float2(TransparencySubjectGuardCenter.x * aspect, TransparencySubjectGuardCenter.y);
-	float2 axis = float2(TransparencySubjectGuardAxis.x * aspect, TransparencySubjectGuardAxis.y);
-	float axisLengthSquared = dot(axis, axis);
-
-	if (axisLengthSquared > 1e-6f)
-	{
-		// Use the same projected player measurements as the broad gate, but keep
-		// this capsule close to the head-to-feet extent.  Its width is 1.65 times
-		// the measured actor radius instead of the broad diagnostic gate's 4.0.
-		// This is a spatial prior only; it does not claim to identify equipment.
-		float verticalSign = axis.y <= 0.0f ? -1.0f : 1.0f;
-		axis = float2(0.0f, verticalSign * sqrt(axisLengthSquared));
-		float2 start = centre - axis * 1.20f;
-		float2 end = centre + axis * 1.10f;
-		float2 segment = end - start;
-		float along = saturate(dot(samplePoint - start, segment) /
-			max(dot(segment, segment), 1e-6f));
-		float distanceToAxis = length(samplePoint - (start + segment * along));
-		float radius = max(TransparencySubjectGuardRadius.x * 1.65f, 0.035f);
-		return 1.0f - smoothstep(radius * 0.80f, radius, distanceToAxis);
-	}
-
-	float2 coreRadius = max(
-		TransparencySubjectGuardRadius * float2(1.35f, 1.10f),
-		float2(0.035f, 0.07f));
-	float2 ellipse = (uv - TransparencySubjectGuardCenter) / coreRadius;
-	return 1.0f - smoothstep(0.80f, 1.0f, length(ellipse));
-}
-
-int GetTransparencyPlayerDepthClass(uint2 renderPixel)
-{
-	float pixelDepthMeters = GetDepthAtRenderPixel(renderPixel) * 1000.0f;
-	// The projected player anchor is the head. Allow enough room for the body and
-	// low-angle perspective without accepting an unlimited amount of background.
-	float toleranceMeters = clamp(TransparencySubjectDepthMeters * 0.08f, 0.45f, 1.25f);
-	float signedDepthDifference = pixelDepthMeters - TransparencySubjectDepthMeters;
-	if (abs(signedDepthDifference) <= toleranceMeters)
-		return 0;
-	return signedDepthDifference > 0.0f ? 1 : -1;
-}
-
-float GetTransparencyGeometryBoundGate(float2 uv, bool candidate)
-{
-	uint count = candidate ? TransparencyCandidateBoundCount : PlayerGeometryBoundCount;
-	float gate = 0.0f;
-	[loop]
-	for (uint index = 0; index < min(count, 32u); ++index)
-	{
-		float4 bound = candidate ?
-			TransparencyCandidateBounds[index] : PlayerGeometryBounds[index];
-		float2 ellipse = (uv - bound.xy) / max(bound.zw, float2(0.003f, 0.003f));
-		gate = max(gate, 1.0f - smoothstep(0.88f, 1.0f, length(ellipse)));
-	}
-	return gate;
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -1527,30 +1311,6 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	// softening a moon pixel whose CoC was deliberately set to zero.
 	float moonProtection = GetMoonFarDepthProtection(DTid);
 	color.rgb = lerp(color.rgb, originalColor.rgb, moonProtection);
-
-	// Diagnostic Test23 projects every player geometry bound and separately marks
-	// candidates found through NiAlphaProperty or shader/material alpha hints.
-	if (TransparencyDiagnosticEnabled != 0)
-	{
-		float subjectGate = GetTransparencySubjectGate(uv);
-		if (subjectGate > 0.5f)
-		{
-			float3 signedDelta = GetTransparencySignedRgbDeltaAtRenderPixel(DTid);
-			float deltaMagnitude = max(abs(signedDelta.r), max(abs(signedDelta.g), abs(signedDelta.b)));
-			float candidateGate = GetTransparencyGeometryBoundGate(uv, true);
-			float playerGeometryGate = GetTransparencyGeometryBoundGate(uv, false);
-			if (deltaMagnitude < TransparencyDeltaThreshold)
-				color.rgb = playerGeometryGate > 0.5f ?
-					float3(1.0f, 0.0f, 1.0f) : // magenta: unchanged inside any player geometry bound
-					float3(0.0f, 0.0f, 1.0f);  // blue: unchanged outside player geometry bounds
-			else if (candidateGate > 0.5f)
-				color.rgb = float3(0.0f, 1.0f, 0.0f); // green: changed in alpha candidate bound
-			else if (playerGeometryGate > 0.5f)
-				color.rgb = float3(1.0f, 1.0f, 0.0f); // yellow: changed in other player geometry bound
-			else
-				color.rgb = float3(0.0f, 1.0f, 1.0f); // cyan: changed outside player geometry bounds
-		}
-	}
 
 	RWTexOut[DTid] = float4(color.rgb, 1.0f);
 }

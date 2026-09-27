@@ -1,6 +1,6 @@
 # CinematicDoFStandalone 1.0.2
 
-> **Version 1.0.2:** `Keep Sky Sharp` now protects far-depth moon pixels together with the clear-depth sky, the independent two-colour Silhouette Photo Mode is included, and Fixed Focus extends from 0.1 m to 2000 m through a logarithmic control. Existing presets and INIs remain compatible.
+> **Version 1.0.2:** `Keep Sky Sharp` protects far-depth moon pixels together with the clear-depth sky, the independent two-colour Silhouette Photo Mode is included, and transparent subjects use the full-resolution main depth consistently across display configurations. Existing presets and INIs remain compatible.
 
 ## 日本語
 
@@ -32,7 +32,9 @@ Jiaye氏のCommunity Shaders AIOを基に、Cinematic DoFを単独で利用で�
 
 ビルドはSkyrim SE／AEを対象とします。1.0.2の月保護はメイン環境、Community Shadersなし、最小環境、`bUse64bitsHDRRenderTarget=0`の最小環境で実ゲーム確認済みです。1.7.104対応とAddress Library v5形式は、1.0.0で検証済みの経路を維持します。Community Shadersは不要です。併用する場合は、二重適用を避けるためCommunity Shaders側のDepth of FieldをOFFにしてください。
 
-人物追従中は、Community ShadersやHDR設定にかかわらず、画面上の人物範囲と実際の深度を組み合わせた共通の人物保護を使用します。接写時に深度を無視して頭部を強制保護する処理は使用せず、首周りや画面端の背景を人物として保護しないようにします。Community Shaders併用時はHDR設定にかかわらず、有効な人物追従中だけ、保存値を変更せず手前ピント範囲の実効値を最低0.17 mにします。非人物の追従対象には適用されません。既存のCommunity Shaders深度フォールバック条件は維持します。
+人物追従中は、Community ShadersやHDR設定にかかわらず、画面上の人物範囲と実際の深度を組み合わせた共通の人物保護を使用します。接写時に深度を無視して頭部を強制保護する処理は使用せず、首周りや画面端の背景を人物として保護しないようにします。Community Shaders併用時はHDR設定にかかわらず、有効な人物追従中だけ、保存値を変更せず手前ピント範囲の実効値を最低0.17 mにします。非人物の追従対象には適用されません。DoFの距離判定には常にフル解像度のメイン深度を使用し、Community Shadersの有無やSAO・SSR・64-bit HDR設定によって別の深度へ切り替えません。
+
+ピント境界のサンプルでは、手前と奥で大きく異なるCoCの色が混ざりにくいよう重みを制限します。また、有効な手前ボケの色サンプルが一つもない画素は空のレイヤーとして扱い、HDR0環境で人物周囲に現れていた太い黒膜を防ぎます。
 
 Community Shadersを使わない環境でも同じ人物保護を使用します。非人物のコンソール追跡対象については、SSRまたは64-bit HDRが無効な従来条件でのみ保護します。64-bit HDRが明示的に無効で、有効な追従対象がいるフレームに限り、保存値を変更せず手前ピント範囲の実効値を最低0.15 mにします。
 
@@ -130,7 +132,9 @@ CinematicDoFStandalone is an SKSE plugin that makes Cinematic DoF available as a
 
 The build targets Skyrim SE and AE. Version 1.0.2's moon protection was tested in game with the main setup, without Community Shaders, in a minimal setup, and in that minimal setup with `bUse64bitsHDRRenderTarget=0`. Skyrim 1.7.104 support and the Address Library v5 path retain the route validated for version 1.0.0. Community Shaders is optional. If it is installed, disable its Depth of Field effect to avoid applying two DoF effects at once.
 
-While an actor is tracked, one subject-protection path combines the projected actor area with measured depth regardless of Community Shaders or HDR settings. It does not use the former close-up head override that ignored depth, preventing the projected head circle from protecting neck gaps or edge-of-frame background. With Community Shaders, a valid tracked actor receives an effective near-focus floor of 0.17 m regardless of the HDR setting, without changing the saved value. Non-actor targets do not receive it. The established Community Shaders depth-fallback conditions are retained.
+While an actor is tracked, one subject-protection path combines the projected actor area with measured depth regardless of Community Shaders or HDR settings. It does not use the former close-up head override that ignored depth, preventing the projected head circle from protecting neck gaps or edge-of-frame background. With Community Shaders, a valid tracked actor receives an effective near-focus floor of 0.17 m regardless of the HDR setting, without changing the saved value. Non-actor targets do not receive it. DoF distance classification always uses the full-resolution main depth and does not switch to another depth buffer based on Community Shaders, SAO, SSR, or 64-bit HDR settings.
+
+Samples across a focus boundary are weighted to avoid mixing colours with strongly incompatible near/far CoC values. If a near-blur pixel has no valid colour samples, it is treated as an empty layer, preventing the thick dark membrane previously visible around subjects in HDR0 configurations.
 
 The same actor protection is used without Community Shaders. Non-actor console targets retain the legacy protection only when SSR or 64-bit HDR is disabled. When 64-bit HDR is explicitly disabled and a valid tracked target exists, the effective near-focus range is floored at 0.15 m without changing the saved value.
 

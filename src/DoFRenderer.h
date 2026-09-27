@@ -15,21 +15,10 @@ namespace CDoF
 		void SetTargetFocus(
 			TargetFocusSettings a_settings,
 			Settings a_dialogueLensSettings);
-		void RecordTransparencyCall(RE::BSShaderAccumulator* a_accumulator, std::uint32_t a_renderFlags);
-		void CaptureSelectedTransparencyBefore(std::uint32_t a_renderFlags);
-		void CaptureSelectedTransparencyAfter();
 		void ApplyBeforePostProcessing();
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
 
 	private:
-		static constexpr std::size_t kMaximumTransparencyGeometryBounds = 32;
-
-		struct TransparencyGeometryBound
-		{
-			std::array<float, 2> center{ 0.5F, 0.5F };
-			std::array<float, 2> radius{};
-		};
-
 		struct TargetFocusSample
 		{
 			float distanceMeters{};
@@ -39,12 +28,6 @@ namespace CDoF
 			std::array<float, 2> guardAxis{};
 			std::array<float, 2> headGuardCenter{ 0.5F, 0.5F };
 			float headGuardRadius{};
-			std::array<TransparencyGeometryBound, kMaximumTransparencyGeometryBounds> transparencyCandidateBounds{};
-			std::array<TransparencyGeometryBound, kMaximumTransparencyGeometryBounds> playerGeometryBounds{};
-			std::uint32_t transparencyCandidateBoundCount{};
-			std::uint32_t playerGeometryBoundCount{};
-			std::uint32_t classicAlphaGeometryCount{};
-			std::uint32_t shaderAlphaGeometryCount{};
 			bool guardValid{ false };
 			bool headGuardValid{ false };
 			bool surfaceFocusValid{ false };
@@ -92,38 +75,6 @@ namespace CDoF
 			ComPtr<ID3D11SamplerState> linearSampler;
 		};
 
-		struct TransparencyCapture
-		{
-			ID3D11Device* device{};
-			std::uint32_t width{};
-			std::uint32_t height{};
-			std::uint32_t renderLeft{};
-			std::uint32_t renderTop{};
-			std::uint32_t renderWidth{};
-			std::uint32_t renderHeight{};
-			DXGI_FORMAT format{ DXGI_FORMAT_UNKNOWN };
-			Texture before;
-			Texture after;
-			bool pending{ false };
-			bool valid{ false };
-		};
-
-		struct TransparencyCallSignature
-		{
-			std::uint32_t renderFlags{};
-			std::uint32_t renderMode{};
-			std::uint32_t minimumPass{};
-			std::uint32_t maximumPass{};
-			std::uint32_t minimumBucket{};
-			std::uint32_t maximumBucket{};
-			std::uint32_t callCount{};
-			std::uintptr_t firstAccumulator{};
-			bool currentActive{};
-			bool firstPerson{};
-			bool drawDecals{};
-			bool multipleAccumulators{};
-		};
-
 		struct Shaders
 		{
 			ComPtr<ID3D11ComputeShader> updateFocus;
@@ -160,9 +111,6 @@ namespace CDoF
 			std::uint32_t a_renderHeight);
 		bool CompileShaders(ID3D11Device* a_device);
 		bool CreateTexture(ID3D11Device* a_device, Texture& a_texture, DXGI_FORMAT a_format, std::uint32_t a_width, std::uint32_t a_height);
-		bool EnsureTransparencyCapture(
-			ID3D11Device* a_device,
-			const D3D11_TEXTURE2D_DESC& a_sourceDescription);
 		bool CreateConstantBuffer(ID3D11Device* a_device, std::uint32_t a_size, ComPtr<ID3D11Buffer>& a_buffer);
 		bool UpdateConstantBuffer(ID3D11DeviceContext* a_context, ID3D11Buffer* a_buffer, const void* a_data, std::uint32_t a_size);
 		void Dispatch(
@@ -176,8 +124,7 @@ namespace CDoF
 			std::uint32_t a_inputWidth,
 			std::uint32_t a_inputHeight,
 			std::uint32_t a_renderLeft,
-			std::uint32_t a_renderTop,
-			const TargetFocusSample* a_transparencySubjectGuard);
+			std::uint32_t a_renderTop);
 		bool DispatchSilhouette(
 			ID3D11DeviceContext* a_context,
 			ID3D11ShaderResourceView* a_skyMaskDepth,
@@ -211,21 +158,6 @@ namespace CDoF
 		TargetFocusSettings targetFocusSettings_{};
 		Settings dialogueLensSettings_{};
 		Resources resources_{};
-		TransparencyCapture transparencyCapture_{};
-		static constexpr std::size_t kMaximumTransparencyCallSignatures = 64;
-		std::array<TransparencyCallSignature, kMaximumTransparencyCallSignatures> transparencyCallSignatures_{};
-		std::size_t transparencyCallSignatureCount_{};
-		std::uint32_t transparencyCallCount_{};
-		std::uint32_t transparencyCallOverflowCount_{};
-		std::uint32_t transparencyNullAccumulatorCount_{};
-		std::uint32_t transparencyStableLocationFrames_{};
-		bool transparencyLocationInitialized_{ false };
-		bool transparencyPreviousLocationInterior_{ false };
-		bool loggedInteriorTransparencySignatures_{ false };
-		bool loggedExteriorTransparencySignatures_{ false };
-		bool loggedSelectedTransparencyCapture_{ false };
-		bool loggedSelectedTransparencyCaptureFailure_{ false };
-		bool loggedTransparencySubjectGuard_{ false };
 		Shaders shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
 		ID3D11Device* shaderDevice_{};
@@ -238,11 +170,9 @@ namespace CDoF
 		bool loggedFirstSilhouetteFrame_{ false };
 		bool loggedSilhouetteDestinationFailure_{ false };
 		bool depthPathChecked_{ false };
-		bool useLowSpecDepthFallback_{ false };
 		bool useStandaloneNonActorTargetGuard_{ false };
 		bool useCommunityShadersActorNearFocusAssist_{ false };
 		bool useStandaloneNearFocusAssist_{ false };
-		bool loggedDepthFallbackUnavailable_{ false };
 		bool loggedTargetGuard_{ false };
 		bool loggedTargetNearFocusAssist_{ false };
 		bool loggedRenderAreaDiagnostics_{ false };

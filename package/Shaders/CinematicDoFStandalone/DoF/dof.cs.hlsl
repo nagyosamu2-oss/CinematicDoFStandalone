@@ -340,6 +340,24 @@ float GetSkyInteriorProtection(uint2 renderPixel)
 	return GetSkyClearDepthMask(renderPixel);
 }
 
+float GetLocalSkyCoverage(uint2 renderPixel)
+{
+	// Estimate sub-pixel coverage at the final full-resolution boundary.  A clear
+	// sky texel surrounded only by other clear texels remains fully protected;
+	// clear texels beside thin branches, leaves, mountains, or buildings retain a
+	// fractional geometry coverage that can receive the already-filtered far layer.
+	float skyCoverage = 0.0f;
+	[unroll] for (int y = -1; y <= 1; ++y)
+	{
+		[unroll] for (int x = -1; x <= 1; ++x)
+		{
+			uint2 samplePixel = ClampFullResolutionPixel(int2(renderPixel) + int2(x, y));
+			skyCoverage += GetSkyClearDepthMask(samplePixel);
+		}
+	}
+	return skyCoverage / 9.0f;
+}
+
 float GetBodyTargetGuard(float2 uv)
 {
 	if (!TargetGuardEnabled)
@@ -1260,6 +1278,17 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	color.rgb = lerp(color.rgb, nearFragment.rgb, nearBlend);
 	float skyProtection = RecoverSkyInteriorProtection(DTid, uv, pixelCoC);
 	color.rgb = lerp(color.rgb, sourceFragment.rgb, skyProtection);
+	// Keep Sky Sharp Test 3: exact sky restoration made alpha-tested foliage and
+	// other thin silhouettes look sharp only where they crossed the sky.  Reapply
+	// a fractional amount of the filtered far layer to clear-depth boundary pixels
+	// using local geometry coverage. Interior sky remains exact and sharp, while
+	// the one-pixel transition can carry the same DoF softness as the object.
+	if (KeepSkySharp != 0 && GetSkyClearDepthMask(DTid) > 0.5f)
+	{
+		float geometryCoverage = 1.0f - GetLocalSkyCoverage(DTid);
+		float boundaryBlend = geometryCoverage * saturate(FarPlaneMaxBlur);
+		color.rgb = lerp(color.rgb, farFragment.rgb, boundaryBlend);
+	}
 	// Restore the exact source texel for the moon. This is deliberately repeated
 	// after both blur layers so a near foreground object cannot punch a blurred
 	// circular or historical mask into the scene.

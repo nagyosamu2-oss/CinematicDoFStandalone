@@ -448,6 +448,12 @@ bool CDoF::DoFRenderer::EnsureResources(
 	const auto sixteenthWidth = std::max(1U, (eighthWidth + 1U) / 2U);
 	const auto sixteenthHeight = std::max(1U, (eighthHeight + 1U) / 2U);
 	const auto color = a_inputDescription.Format;
+	// R11G11B10_FLOAT has no alpha channel, while the near-blur pass stores its
+	// coverage in alpha for the full-resolution combiner. Preserve that coverage
+	// in a dedicated alpha-capable half-resolution texture on the HDR0 path.
+	const auto nearBlurColor = color == DXGI_FORMAT_R11G11B10_FLOAT ?
+		DXGI_FORMAT_R16G16B16A16_FLOAT :
+		color;
 
 	const auto createColor = [&](Texture& a_texture, bool a_half) {
 		return CreateTexture(a_device, a_texture, color, a_half ? halfWidth : width, a_half ? halfHeight : height);
@@ -461,7 +467,7 @@ bool CDoF::DoFRenderer::EnsureResources(
 		!CreateTexture(a_device, resources_.farGatherColor2, color, eighthWidth, eighthHeight) ||
 		!CreateTexture(a_device, resources_.farGatherColor3, color, sixteenthWidth, sixteenthHeight) ||
 		!createColor(resources_.farBlurred, true) ||
-		!createColor(resources_.nearBlurred, true) ||
+		!CreateTexture(a_device, resources_.nearBlurred, nearBlurColor, halfWidth, halfHeight) ||
 		!createColor(resources_.blurredFiltered, true) ||
 		!createColor(resources_.postSmooth, false) ||
 		!createColor(resources_.postSmooth2, false) ||
@@ -489,10 +495,11 @@ bool CDoF::DoFRenderer::EnsureResources(
 	resources_.dofReady = true;
 
 	spdlog::info(
-		"Created depth-of-field resources: {}x{}, format {} (input allocation {}x{})",
+		"Created depth-of-field resources: {}x{}, color format {}, near-blur format {} (input allocation {}x{})",
 		width,
 		height,
 		static_cast<std::uint32_t>(color),
+		static_cast<std::uint32_t>(nearBlurColor),
 		a_inputDescription.Width,
 		a_inputDescription.Height);
 	return true;

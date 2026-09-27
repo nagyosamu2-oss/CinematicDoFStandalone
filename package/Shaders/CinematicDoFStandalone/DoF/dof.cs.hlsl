@@ -328,45 +328,16 @@ float GetSkyHighlightEligibility(float2 renderUV)
 	return 1.0f - skyOrMoon;
 }
 
-float GetSkyRingSafety(uint2 renderPixel, int radius)
-{
-	int2 pixel = int2(renderPixel);
-	float clearCount = 0.0f;
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(radius, 0)));
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(-radius, 0)));
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(0, radius)));
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(0, -radius)));
-
-	// A ring is considered safe only when all four cardinal samples remain sky.
-	// Combining several radii below produces a stepped feather without allocating
-	// or filtering a separate mask texture.
-	return smoothstep(0.75f, 1.0f, clearCount * 0.25f);
-}
-
 float GetSkyInteriorProtection(uint2 renderPixel)
 {
 	if (KeepSkySharp == 0)
 		return 0.0f;
 
-	float centre = GetSkyClearDepthMask(renderPixel);
-	if (centre < 0.5f)
-		return 0.0f;
-
-	float resolutionScale = max(SharedData::BufferDim.y / 1440.0f, 0.5f);
-	float farBlurRadiusInPixels = (max(FarPlaneMaxBlur, 0.0f) * 0.01f) * invBlurPixelSizeLength;
-	int nearRadius = max(1, (int)round(resolutionScale));
-	int farRadius = max(
-		nearRadius + 2,
-		(int)round(clamp(farBlurRadiusInPixels * 0.20f, 4.0f * resolutionScale, 12.0f * resolutionScale)));
-	int middleRadius = max(nearRadius + 1, (int)round(lerp((float)nearRadius, (float)farRadius, 0.45f)));
-
-	float nearSafety = GetSkyRingSafety(renderPixel, nearRadius);
-	float middleSafety = GetSkyRingSafety(renderPixel, middleRadius);
-	float farSafety = GetSkyRingSafety(renderPixel, farRadius);
-
-	// Keep the normal DoF result at the silhouette, then restore progressively
-	// more of the source sky as the pixel moves away from depth-writing geometry.
-	return centre * (0.25f * nearSafety + 0.35f * middleSafety + 0.40f * farSafety);
+	// Test 1: preserve the exact full-resolution clear-depth classification.
+	// The previous multi-ring safety test deliberately left a blur-radius-sized
+	// band of sky unprotected around geometry. At a wide aperture that band became
+	// a visible expanding halo around moons, mountains, trees, and buildings.
+	return GetSkyClearDepthMask(renderPixel);
 }
 
 float GetBodyTargetGuard(float2 uv)
@@ -1082,6 +1053,11 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			float4 tap = 0;
 			float weight = (sampleRadius >= 0) * ringWeight * CalculateSampleWeight(sampleRadius * FarPlaneMaxBlur, ringDistance);
 			weight *= CalculateFarPlaneCoCCompatibility(colorRadius, sampleRadius);
+			// Keep Sky Sharp now treats the raw depth classification as a gather
+			// boundary as well as a final compositing mask. Clear sky and the far-depth
+			// moon may remain sharp, but their colour must not be transported into a
+			// blurred geometry pixel outside that protected surface.
+			weight *= GetSkyHighlightEligibility(fullResolutionTap);
 			// adjust the weight for samples which are in front of the fragment, as they have to get their weight boosted so we don't see edges bleeding through.
 			// as otherwise they'll get a weight that's too low relatively to the pixels sampled from the plane the fragment is in.The 3.0 value is empirically determined.
 			weight *= (1.0 + min(FarPlaneMaxBlur, 3.0f) * saturate(colorRadius - sampleRadius));

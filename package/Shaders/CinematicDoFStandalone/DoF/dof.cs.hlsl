@@ -968,6 +968,13 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 float GetFarGatherMip(float kernelRadiusInPixels, float ringCount)
 {
+	// Keep Sky Sharp Test 2: coarse color levels may already contain bright sky
+	// mixed into distant geometry before the per-tap depth rejection runs. Force
+	// the half-resolution source while sky protection is enabled to isolate that
+	// contamination path. The normal adaptive gather remains unchanged when off.
+	if (KeepSkySharp != 0)
+		return 0.0f;
+
 	// Mip 0 is already half resolution. Match each tap to the average radial
 	// spacing of the current concentric-ring kernel. Test 2 deliberately delays
 	// each coarser-level transition until the spacing reaches the next full power

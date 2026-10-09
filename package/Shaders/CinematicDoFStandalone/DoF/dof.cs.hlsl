@@ -268,16 +268,6 @@ float GetDepth(float2 uv)
 	return max(depth, 1e-6);
 }
 
-float GetDepthAtRenderPixel(uint2 renderPixel)
-{
-	// Read the exact source texel for boundary classification. A filtered depth
-	// sample would manufacture intermediate depths precisely where this test needs
-	// to distinguish a focused foreground edge from the background behind it.
-	float depth = DepthTexture[GetInputPixel(renderPixel)];
-	depth = SharedData::GetScreenDepth(depth) * GAME_UNIT_TO_M * 0.001f;  // in KM
-	return max(depth, 1e-6f);
-}
-
 float GetDualDepthTransparencyCandidate(uint2 renderPixel)
 {
 	if (ExperimentalTransparencyEnabled == 0)
@@ -670,8 +660,9 @@ float3 BlendSoftApertureHighlight(
 	return lerp(blurredColor, max(blurredColor, highlightMean), highlightBlend);
 }
 
-float CalculateBlurDiscSizeForDepth(FocusInfo focusInfo, float pixelDepth)
+float CalculateBlurDiscSize(FocusInfo focusInfo)
 {
+	float pixelDepth = GetDepth(focusInfo.texcoord);
 	float pixelDepthInM = pixelDepth * 1000.0;  // in meter
 	float signedFocusDistance = pixelDepthInM - focusInfo.focusDepthInM;
 	float addedFocusRange = signedFocusDistance < 0.0f ? NearFocusRangeMeters : FarFocusRangeMeters;
@@ -698,50 +689,6 @@ float CalculateBlurDiscSizeForDepth(FocusInfo focusInfo, float pixelDepth)
 	                (abs(pixelDepthInM - focusInfo.focusDepthInM) / (pixelDepthInM + (pixelDepthInM == 0)));
 	float toReturn = max(abs(cocInMM) * SENSOR_SIZE, 0);  // divide by sensor size to get coc in % of screen (or better: in sampler units)
 	return signedFocusDistance < 0.0f ? -toReturn : toReturn;
-}
-
-float CalculateBlurDiscSize(FocusInfo focusInfo)
-{
-	return CalculateBlurDiscSizeForDepth(focusInfo, GetDepth(focusInfo.texcoord));
-}
-
-float RefineFarCoCAtFocusedBoundary(FocusInfo focusInfo, uint2 renderPixel, float centreCoC)
-{
-	// Protect only the far/background side of a discontinuity. If one of
-	// the four immediately adjacent texels is nearer and has a smaller CoC, use
-	// that CoC for the boundary pixel. This is deliberately limited to one pixel;
-	// it runs before tiling and blur, and does not alter the existing actor guard.
-	if (centreCoC <= 0.0f)
-		return centreCoC;
-
-	float centreDepth = GetDepthAtRenderPixel(renderPixel);
-	float bestDepth = centreDepth;
-	float bestCoC = centreCoC;
-	static const int2 offsets[4] = {
-		int2(-1, 0),
-		int2(1, 0),
-		int2(0, -1),
-		int2(0, 1)
-	};
-
-	[unroll]
-	for (int i = 0; i < 4; ++i) {
-		uint2 samplePixel = ClampFullResolutionPixel(int2(renderPixel) + offsets[i]);
-		float sampleDepth = GetDepthAtRenderPixel(samplePixel);
-		float sampleCoC = CalculateBlurDiscSizeForDepth(focusInfo, sampleDepth);
-
-		// A minimum separation avoids reacting to depth quantisation on a flat
-		// surface. The CoC comparison restricts the correction to a genuinely
-		// sharper foreground neighbour rather than spreading arbitrary geometry.
-		bool isNearer = sampleDepth * 1000.0f + 0.02f < centreDepth * 1000.0f;
-		bool isSharper = abs(sampleCoC) + 1e-6f < abs(bestCoC);
-		if (isNearer && isSharper && sampleDepth < bestDepth) {
-			bestDepth = sampleDepth;
-			bestCoC = sampleCoC;
-		}
-	}
-
-	return bestCoC;
 }
 
 float RecoverSkyInteriorProtection(uint2 renderPixel, float2 uv, float protectedCoC)
@@ -852,25 +799,6 @@ float CalculateSampleWeightWithCompensation(
 	float distanceCompensation)
 {
 	return saturate(sampleRadiusInCoC - (ringDistanceInCoC * distanceCompensation) + 0.5f);
-}
-
-float CalculateFarPlaneCoCCompatibility(float centreCoC, float sampleCoC)
-{
-	// Keep smoothly varying background depth continuous, but suppress taps that
-	// belong to a substantially different focus layer. Using a relative delta
-	// makes the test independent of the selected aperture and maximum blur.
-	float scale = max(max(abs(centreCoC), abs(sampleCoC)), 1e-4f);
-	float relativeDifference = abs(sampleCoC - centreCoC) / scale;
-	return 1.0f - smoothstep(0.35f, 0.85f, relativeDifference);
-}
-
-float CalculateNearPlaneCoCCompatibility(float originalSampleCoC)
-{
-	// The dilated near layer must spread foreground colour over the far layer,
-	// but it should not gather colour from pixels that are themselves on the far
-	// side of focus. Keep in-focus and negative-CoC taps; fade out positive CoC
-	// over a few full-resolution pixels to avoid a binary temporal edge.
-	return 1.0f - smoothstep(blurPixelSizeLength, blurPixelSizeLength * 6.0f, originalSampleCoC);
 }
 
 float2 MorphPointOffsetWithAnamorphicDeltas(float2 pointOffset, float4 anamorphicFactors, float2x2 anamorphicRotationMatrix)
@@ -1009,7 +937,6 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	FillFocusInfoData(focusInfo);
 
 	float coc = CalculateBlurDiscSize(focusInfo);
-	coc = RefineFarCoCAtFocusedBoundary(focusInfo, DTid, coc);
 	// Keep only the interior of the clear-depth sky outside the blur. Pixels close
 	// to depth-writing geometry retain progressively more of the normal CoC so the
 	// boundary does not become a hard cut-out.
@@ -1240,7 +1167,6 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 				sampleWeight = CalculateSampleWeightWithCompensation(
 					sampleRadius * FarPlaneMaxBlur, ringDistance, adaptiveDistanceCompensation);
 			float weight = (sampleRadius >= 0) * ringWeight * sampleWeight;
-			weight *= CalculateFarPlaneCoCCompatibility(colorRadius, sampleRadius);
 			// Keep Sky Sharp now treats the raw depth classification as a gather
 			// boundary as well as a final compositing mask. Clear sky and the far-depth
 			// moon may remain sharp, but their colour must not be transported into a
@@ -1318,15 +1244,11 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float pointsFirstRing = 7;
 	// luma is stored in alpha
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
-	float centreCompatibility = CalculateNearPlaneCoCCompatibility(colorRadii.g);
-	float4 average = float4(
-		color.rgb * colorRadiusToUse * bokehBusyFactorToUse * centreCompatibility,
-		bokehBusyFactorToUse * centreCompatibility);
+	float4 average = float4(color.rgb * colorRadiusToUse * bokehBusyFactorToUse, bokehBusyFactorToUse);
 	// Include the centre sample in the highlight estimate. The previous near path
 	// only inspected the concentric rings, so a small highlight at the centre of
 	// its own blur could be weaker than the outline surrounding it.
-	float centerApertureHighlightWeight =
-		CalculateNearApertureHighlightWeight(color.rgb, colorRadiusToUse) * centreCompatibility;
+	float centerApertureHighlightWeight = CalculateNearApertureHighlightWeight(color.rgb, colorRadiusToUse);
 	if (centerApertureHighlightWeight > 0.0f)
 		centerApertureHighlightWeight *= GetSkyHighlightEligibility(blurInfo.texcoord);
 	float3 apertureHighlightSum = color.rgb * centerApertureHighlightWeight;
@@ -1356,32 +1278,25 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			float2 fullResolutionTap = ClampFullResolutionUV(tapCoords);
 			float2 halfResolutionTap = ClampHalfResolutionUV(tapCoords);
 			float4 tap = TexColor.SampleLevel(LinearSampler, halfResolutionTap, 0);
-			// r contains blurred CoC, g contains original CoC. Original can be negative.
-			float2 sampleRadii = float2(
-				TexCoCBlurredInput.SampleLevel(LinearSampler, halfResolutionTap, 0),
-				TexCoCInput.SampleLevel(LinearSampler, fullResolutionTap, 0));
-			float sampleWeight = weight * CalculateNearPlaneCoCCompatibility(sampleRadii.g);
 			float apertureHighlightWeight = CalculateNearApertureHighlightWeight(tap.rgb, colorRadiusToUse);
 			if (apertureHighlightWeight > 0.0f)
 				apertureHighlightWeight *= GetSkyHighlightEligibility(fullResolutionTap);
-			float weightedHighlight = apertureHighlightWeight * sampleWeight;
+			float weightedHighlight = apertureHighlightWeight * weight;
 			apertureHighlightSum += tap.rgb * weightedHighlight;
 			apertureHighlightWeightSum += weightedHighlight;
 			float weightedRimHighlight = weightedHighlight * apertureRimFactor;
 			apertureHighlightRimSum += tap.rgb * weightedRimHighlight;
 			apertureHighlightRimWeightSum += weightedRimHighlight;
-			average.rgb += tap.rgb * sampleWeight;
-			average.w += sampleWeight;
+			average.rgb += tap.rgb * weight;
+			average.w += weight;
 			angle += anglePerPoint;
 		}
 		pointsOnRing += pointsFirstRing;
 		currentRingRadiusCoords += ringRadiusDeltaCoords;
 	}
-	// The dilated near-CoC footprint can reach a background pixel while every
-	// colour tap is rejected by the CoC compatibility test. Dividing that empty
-	// sum produces black while the independently calculated coverage remains
-	// non-zero, which composites as a thick dark membrane around foreground
-	// silhouettes. Leave the near layer empty when it has no valid colour.
+	// Keep the validated empty-gather safety guard. It is normally unreachable
+	// with the restored 1.0.2 colour gather, but remains harmless protection
+	// against invalid normalization if a future aperture produces no samples.
 	if (average.w <= 1e-5f) {
 		color.a = 0.0f;
 		RWTexOut[DTid] = color;

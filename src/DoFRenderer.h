@@ -15,6 +15,9 @@ namespace CDoF
 		void SetTargetFocus(
 			TargetFocusSettings a_settings,
 			Settings a_dialogueLensSettings);
+		void SetTDMFocus(TDMFocusSettings a_settings);
+		void SetSneakFocus(SneakFocusSettings a_settings);
+		void SetFocusPickerActive(bool a_active);
 		void ApplyBeforePostProcessing();
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
 
@@ -148,6 +151,8 @@ namespace CDoF
 		{
 			kNone,
 			kDialogue,
+			kTDMLock,
+			kSneak,
 			kPlayer,
 			kConsole
 		};
@@ -156,6 +161,8 @@ namespace CDoF
 		ModeSettings modeSettings_{};
 		SilhouetteSettings silhouetteSettings_{};
 		TargetFocusSettings targetFocusSettings_{};
+		TDMFocusSettings tdmFocusSettings_{};
+		SneakFocusSettings sneakFocusSettings_{};
 		Settings dialogueLensSettings_{};
 		Resources resources_{};
 		Shaders shaders_{};
@@ -177,6 +184,7 @@ namespace CDoF
 		bool loggedTargetNearFocusAssist_{ false };
 		bool loggedRenderAreaDiagnostics_{ false };
 		bool dialogueOnlyPrewarmed_{ false };
+		bool focusPickerActive_{ false };
 		TargetFocusMode targetFocusMode_{ TargetFocusMode::kNone };
 		std::mutex mutex_;
 	};

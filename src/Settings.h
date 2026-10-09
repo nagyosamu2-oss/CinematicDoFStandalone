@@ -54,6 +54,21 @@ namespace CDoF
 		float targetFocusOffsetMeters{ 0.0F };
 	};
 
+	struct TDMFocusSettings
+	{
+		bool enabled{ false };
+		std::uint32_t profile{};
+		float blurStrength{ 1.0F };
+		float nearBlurStrength{ 0.0F };
+	};
+
+	struct SneakFocusSettings
+	{
+		bool enabled{ false };
+		std::uint32_t profile{};
+		float blurStrength{ 1.0F };
+	};
+
 	struct ModeSettings
 	{
 		// Keep this outside Settings so loading or storing a lens preset never
@@ -64,6 +79,7 @@ namespace CDoF
 	struct SilhouetteSettings
 	{
 		bool enabled{ false };
+		bool smoothEdges{ true };
 		std::array<float, 3> foregroundColor{ 0.0F, 0.0F, 0.0F };
 		std::array<float, 3> backgroundColor{ 1.0F, 1.0F, 1.0F };
 	};
@@ -87,6 +103,10 @@ namespace CDoF
 	bool PresetSectionExists(const wchar_t* a_section);
 	TargetFocusSettings LoadTargetFocusSettings();
 	bool SaveTargetFocusSettings(const TargetFocusSettings& a_settings);
+	TDMFocusSettings LoadTDMFocusSettings();
+	bool SaveTDMFocusSettings(const TDMFocusSettings& a_settings);
+	SneakFocusSettings LoadSneakFocusSettings();
+	bool SaveSneakFocusSettings(const SneakFocusSettings& a_settings);
 	ModeSettings LoadModeSettings();
 	bool SaveModeSettings(const ModeSettings& a_settings);
 	SilhouetteSettings LoadSilhouetteSettings();

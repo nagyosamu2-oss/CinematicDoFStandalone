@@ -1,9 +1,68 @@
 #include "DoFRenderer.h"
 
+#include "TDMIntegration.h"
+
 #include "ShaderCompiler.h"
 
 namespace
 {
+	constexpr float kTDMLockNearPlaneMaxBlur{ 1.0F };
+	constexpr float kSneakNearFarDistanceCompensation{ 3.0F };
+	struct TDMLockProfile
+	{
+		float focalLength;
+		float fNumber;
+		float farFocusRangeMeters;
+		float farPlaneMaxBlur;
+		bool distanceAdaptive;
+	};
+
+	constexpr std::array kTDMLockProfiles{
+		TDMLockProfile{ 85.0F, 8.0F, 0.75F, 1.75F, false },
+		TDMLockProfile{ 70.0F, 10.0F, 1.00F, 1.35F, true },
+		TDMLockProfile{ 105.0F, 5.6F, 0.35F, 2.25F, false }
+	};
+
+	struct SneakFocusProfile
+	{
+		float focalLength;
+		float fNumber;
+		float farFocusRangeMeters;
+		float farPlaneMaxBlur;
+	};
+
+	constexpr std::array kSneakFocusProfiles{
+		SneakFocusProfile{ 65.0F, 10.0F, 1.75F, 1.25F },
+		SneakFocusProfile{ 95.0F, 5.6F, 0.55F, 1.85F }
+	};
+
+	[[nodiscard]] constexpr float GetFocusRangeScale(float a_strength)
+	{
+		const auto strength = std::clamp(a_strength, 0.0F, 3.0F);
+		if (strength <= 1.0F) {
+			return 2.0F - strength;
+		}
+		return 1.0F - (strength - 1.0F) * 0.30F;
+	}
+
+	[[nodiscard]] constexpr float GetSneakBlurStrength(std::size_t a_profileIndex, float a_strength)
+	{
+		const auto strength = std::clamp(a_strength, 0.0F, 3.0F);
+		if (a_profileIndex == 0U && strength > 2.0F) {
+			return strength + (strength - 2.0F);
+		}
+		return strength;
+	}
+
+	[[nodiscard]] constexpr float GetSneakFNumber(
+		std::size_t a_profileIndex, float a_baseFNumber, float a_strength)
+	{
+		if (a_profileIndex != 0U) {
+			return a_baseFNumber;
+		}
+		const auto highStrength = std::clamp(a_strength - 2.0F, 0.0F, 1.0F);
+		return a_baseFNumber + (8.5F - a_baseFNumber) * highStrength;
+	}
 	struct Float2
 	{
 		float x;
@@ -58,8 +117,10 @@ namespace
 	{
 		std::array<float, 4> foregroundColor;
 		std::array<float, 4> backgroundColor;
+		std::uint32_t smoothEdges;
+		std::array<std::uint32_t, 3> padding;
 	};
-	static_assert(sizeof(SilhouetteConstants) == 32);
+	static_assert(sizeof(SilhouetteConstants) == 48);
 
 	struct RenderArea
 	{
@@ -261,6 +322,24 @@ void CDoF::DoFRenderer::SetTargetFocus(
 	std::scoped_lock lock(mutex_);
 	targetFocusSettings_ = a_settings;
 	dialogueLensSettings_ = a_dialogueLensSettings;
+}
+
+void CDoF::DoFRenderer::SetTDMFocus(TDMFocusSettings a_settings)
+{
+	std::scoped_lock lock(mutex_);
+	tdmFocusSettings_ = std::move(a_settings);
+}
+
+void CDoF::DoFRenderer::SetSneakFocus(SneakFocusSettings a_settings)
+{
+	std::scoped_lock lock(mutex_);
+	sneakFocusSettings_ = std::move(a_settings);
+}
+
+void CDoF::DoFRenderer::SetFocusPickerActive(bool a_active)
+{
+	std::scoped_lock lock(mutex_);
+	focusPickerActive_ = a_active;
 }
 
 bool CDoF::DoFRenderer::CreateTexture(
@@ -961,6 +1040,70 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		}
 	}
 	if (!dialogueOnlyIdle &&
+		targetFocusMode == TargetFocusMode::kNone && tdmFocusSettings_.enabled) {
+		if (const auto target = TDMIntegration::GetLockedTarget()) {
+			if (const auto focus = GetTargetFocus(target, false)) {
+				effectiveSettings = settings_;
+				effectiveSettings.enabled = true;
+				effectiveSettings.autoFocus = focus->surfaceFocusValid;
+				if (focus->surfaceFocusValid) {
+					effectiveSettings.focusX = focus->focusCoordinate[0];
+					effectiveSettings.focusY = focus->focusCoordinate[1];
+					effectiveSettings.autoFocusOffsetMeters = 0.0F;
+				} else {
+					effectiveSettings.manualFocusMeters = std::clamp(focus->distanceMeters, 0.1F, 150.0F);
+				}
+				const auto profileIndex = std::min<std::size_t>(
+					tdmFocusSettings_.profile, kTDMLockProfiles.size() - 1U);
+				const auto& profile = kTDMLockProfiles[profileIndex];
+				const auto focusRangeScale = GetFocusRangeScale(tdmFocusSettings_.blurStrength);
+				effectiveSettings.focalLength = profile.focalLength;
+				effectiveSettings.fNumber = profile.fNumber;
+				effectiveSettings.nearFocusRangeMeters = 0.0F;
+				const auto profileFocusRange = profile.distanceAdaptive ?
+					std::clamp(profile.farFocusRangeMeters + focus->distanceMeters * 0.08F, 1.0F, 4.0F) :
+					profile.farFocusRangeMeters;
+				effectiveSettings.farFocusRangeMeters = std::clamp(
+					profileFocusRange * focusRangeScale, 0.1F, 8.0F);
+				effectiveSettings.farPlaneMaxBlur = std::clamp(
+					profile.farPlaneMaxBlur * tdmFocusSettings_.blurStrength, 0.0F, 8.0F);
+				effectiveSettings.nearPlaneMaxBlur = std::clamp(
+					kTDMLockNearPlaneMaxBlur * tdmFocusSettings_.nearBlurStrength, 0.0F, 4.0F);
+				activeTargetFocus = focus;
+				targetFocusMode = TargetFocusMode::kTDMLock;
+			}
+		}
+	}
+	if (!dialogueOnlyIdle && targetFocusMode == TargetFocusMode::kNone &&
+		sneakFocusSettings_.enabled && !focusPickerActive_) {
+		if (const auto* player = RE::PlayerCharacter::GetSingleton(); player && player->IsSneaking()) {
+			effectiveSettings = settings_;
+			effectiveSettings.enabled = true;
+			effectiveSettings.autoFocus = true;
+			effectiveSettings.focusX = 0.5F;
+			effectiveSettings.focusY = 0.5F;
+			effectiveSettings.autoFocusOffsetMeters = 0.0F;
+
+			const auto profileIndex = std::min<std::size_t>(
+				sneakFocusSettings_.profile, kSneakFocusProfiles.size() - 1U);
+			const auto& profile = kSneakFocusProfiles[profileIndex];
+			const auto focusRangeScale = GetFocusRangeScale(sneakFocusSettings_.blurStrength);
+			effectiveSettings.focalLength = profile.focalLength;
+			effectiveSettings.fNumber = GetSneakFNumber(
+				profileIndex, profile.fNumber, sneakFocusSettings_.blurStrength);
+			effectiveSettings.nearFocusRangeMeters = 0.0F;
+			effectiveSettings.farFocusRangeMeters = std::clamp(
+				profile.farFocusRangeMeters * focusRangeScale, 0.1F, 8.0F);
+			const auto effectiveBlurStrength = GetSneakBlurStrength(
+				profileIndex, sneakFocusSettings_.blurStrength);
+			effectiveSettings.farPlaneMaxBlur = std::clamp(
+				profile.farPlaneMaxBlur * effectiveBlurStrength, 0.0F, 8.0F);
+			effectiveSettings.nearPlaneMaxBlur = 0.0F;
+			effectiveSettings.nearFarDistanceCompensation = kSneakNearFarDistanceCompensation;
+			targetFocusMode = TargetFocusMode::kSneak;
+		}
+	}
+	if (!dialogueOnlyIdle &&
 		targetFocusMode == TargetFocusMode::kNone && targetFocusSettings_.consoleEnabled) {
 		const auto playerSource = targetFocusSettings_.targetSource == TargetFocusSource::kPlayer;
 		const auto focus = playerSource ? GetPlayerTargetFocus() : GetConsoleTargetFocus();
@@ -994,6 +1137,30 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				spdlog::info("Dialogue target focus activated using projected anchor distance at {:.2f} m",
 					effectiveSettings.manualFocusMeters);
 			}
+			break;
+		case TargetFocusMode::kTDMLock:
+			if (effectiveSettings.autoFocus) {
+				spdlog::info(
+					"TDM lock-on focus activated using visible-surface depth at ({:.3f}, {:.3f}); profile {}; dedicated background blur {:.2f}x; foreground blur {:.2f}x",
+					effectiveSettings.focusX,
+					effectiveSettings.focusY,
+					tdmFocusSettings_.profile + 1U,
+					tdmFocusSettings_.blurStrength,
+					tdmFocusSettings_.nearBlurStrength);
+			} else {
+				spdlog::info(
+					"TDM lock-on focus activated using projected anchor distance at {:.2f} m; profile {}; dedicated background blur {:.2f}x; foreground blur {:.2f}x",
+					effectiveSettings.manualFocusMeters,
+					tdmFocusSettings_.profile + 1U,
+					tdmFocusSettings_.blurStrength,
+					tdmFocusSettings_.nearBlurStrength);
+			}
+			break;
+		case TargetFocusMode::kSneak:
+			spdlog::info(
+				"Sneak mode activated using center-screen depth; profile {}; strength {:.2f}x",
+				sneakFocusSettings_.profile + 1U,
+				sneakFocusSettings_.blurStrength);
 			break;
 		case TargetFocusMode::kPlayer:
 			if (effectiveSettings.autoFocus) {
@@ -1511,7 +1678,9 @@ bool CDoF::DoFRenderer::DispatchSilhouette(
 			std::clamp(a_settings.backgroundColor[0], 0.0F, 1.0F),
 			std::clamp(a_settings.backgroundColor[1], 0.0F, 1.0F),
 			std::clamp(a_settings.backgroundColor[2], 0.0F, 1.0F),
-			1.0F }
+			1.0F },
+		.smoothEdges = a_settings.smoothEdges ? 1U : 0U,
+		.padding = {}
 	};
 	const SharedConstants sharedData{
 		.cameraData = GetCameraData(),

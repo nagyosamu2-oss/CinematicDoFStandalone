@@ -2,6 +2,7 @@
 
 #include "DoFRenderer.h"
 #include "MenuFramework.h"
+#include "TDMIntegration.h"
 
 #include <format>
 
@@ -11,6 +12,8 @@ namespace
 
 	Settings uiSettings{};
 	TargetFocusSettings targetFocusSettings{};
+	TDMFocusSettings tdmFocusSettings{};
+	SneakFocusSettings sneakFocusSettings{};
 	ModeSettings modeSettings{};
 	SilhouetteSettings silhouetteSettings{};
 	InterfaceSettings interfaceSettings{};
@@ -27,6 +30,13 @@ namespace
 	};
 	HotkeyCaptureTarget hotkeyCaptureTarget{ HotkeyCaptureTarget::kNone };
 	MenuFramework::WindowInterface* silhouetteWindow{};
+	MenuFramework::WindowInterface* focusPickerWindow{};
+	bool focusPickerActive{};
+	bool focusPickerAcceptInput{};
+	float focusPickerOriginalX{ 0.5F };
+	float focusPickerOriginalY{ 0.5F };
+	bool focusPickerOriginalAutoFocus{};
+	bool focusPickerOriginalConsoleEnabled{};
 	bool japaneseFontEnabled{};
 	std::optional<std::size_t> editingPresetIndex{};
 	std::optional<std::size_t> pendingPresetResetIndex{};
@@ -240,6 +250,66 @@ namespace
 		DoFRenderer::GetSingleton().SetSilhouetteSettings(silhouetteSettings);
 		ApplyTargetFocus();
 		SetStatus("Live values changed (not saved).", "現在値を変更しました（INI未保存）。");
+	}
+
+	void FinishFocusPicker(bool a_confirmed, bool a_reopenMainWindow)
+	{
+		if (!a_confirmed) {
+			uiSettings.focusX = focusPickerOriginalX;
+			uiSettings.focusY = focusPickerOriginalY;
+			uiSettings.autoFocus = focusPickerOriginalAutoFocus;
+			targetFocusSettings.consoleEnabled = focusPickerOriginalConsoleEnabled;
+		}
+		DoFRenderer::GetSingleton().SetSettings(uiSettings);
+		ApplyTargetFocus();
+		DoFRenderer::GetSingleton().SetFocusPickerActive(false);
+		focusPickerActive = false;
+		focusPickerAcceptInput = false;
+		if (focusPickerWindow) {
+			focusPickerWindow->isOpen = false;
+		}
+		if (a_reopenMainWindow) {
+			if (auto* mainWindow = MenuFramework::GetMainWindow()) {
+				mainWindow->isOpen = true;
+			}
+		}
+		SetStatus(
+			a_confirmed ?
+				"Screen AF position selected (not saved)." :
+				"Screen AF position selection cancelled.",
+			a_confirmed ?
+				"画面位置AFのピント位置を決定しました（INI未保存）。" :
+				"画面位置AFのピント位置選択を中止しました。");
+	}
+
+	void BeginFocusPicker()
+	{
+		if (!focusPickerWindow) {
+			SetStatus(
+				"Screen AF visual selection is unavailable in this Menu Framework version.",
+				"このMenu Frameworkでは画面位置AFの視覚選択を利用できません。");
+			return;
+		}
+		focusPickerOriginalX = uiSettings.focusX;
+		focusPickerOriginalY = uiSettings.focusY;
+		focusPickerOriginalAutoFocus = uiSettings.autoFocus;
+		focusPickerOriginalConsoleEnabled = targetFocusSettings.consoleEnabled;
+		uiSettings.autoFocus = true;
+		targetFocusSettings.consoleEnabled = false;
+		DoFRenderer::GetSingleton().SetSettings(uiSettings);
+		ApplyTargetFocus();
+		DoFRenderer::GetSingleton().SetFocusPickerActive(true);
+		focusPickerActive = true;
+		// The picker window may render later in the same ImGui frame as this
+		// button. Ignore that frame so the activation click cannot confirm itself.
+		focusPickerAcceptInput = false;
+		focusPickerWindow->isOpen = true;
+		if (auto* mainWindow = MenuFramework::GetMainWindow()) {
+			mainWindow->isOpen = false;
+		}
+		SetStatus(
+			"Move the mouse, then left-click to confirm. Right-click or Esc cancels.",
+			"マウスで位置を動かし、左クリックで決定します。右クリックまたはEscで中止します。");
 	}
 
 	constexpr std::uint32_t kEscapeKey{ 0x01 };
@@ -600,6 +670,16 @@ namespace
 			PresetByStorageId(targetFocusSettings.dialoguePreset).values);
 	}
 
+	void ApplyTDMFocus()
+	{
+		DoFRenderer::GetSingleton().SetTDMFocus(tdmFocusSettings);
+	}
+
+	void ApplySneakFocus()
+	{
+		DoFRenderer::GetSingleton().SetSneakFocus(sneakFocusSettings);
+	}
+
 	void LoadPresets()
 	{
 		for (auto& preset : presetSlots) {
@@ -737,6 +817,122 @@ namespace
 		if (changed) {
 			ApplyTargetFocus();
 			SetStatus("Dialogue target focus changed (not saved).", "会話中の自動ピント設定を変更しました（INI未保存）。");
+		}
+	}
+
+	void RenderTDMLockFocusControls()
+	{
+		MenuFramework::SeparatorText(Localized("TDM Lock-On Focus", "TDMロックオン時の自動ピント"));
+		bool changed = CheckboxWithHelp(
+			"Focus on TDM lock-on target",
+			"TDMロックオン対象へピントを合わせる",
+			&tdmFocusSettings.enabled,
+			"While True Directional Movement target lock is active, focus follows its current actor target. Dialogue focus keeps priority.",
+			"True Directional Movementでロックオン中、その対象へピントを追従します。会話中は会話フォーカスを優先します。");
+		if (tdmFocusSettings.enabled) {
+			MenuFramework::Text(Localized(
+				TDMIntegration::IsAvailable() ? "TDM: Detected" : "TDM: Not detected",
+				TDMIntegration::IsAvailable() ? "TDM：検出済み" : "TDM：未検出"));
+			MenuFramework::ItemTooltip(Localized(
+				"True Directional Movement detection status and lock-on depth profile.",
+				"True Directional Movementの検出状態と、ロックオン時の深度プロファイルです。"));
+			const auto profileButton = [&](const char* a_english, const char* a_japanese,
+				const char* a_id, std::uint32_t a_profile, const char* a_englishHelp, const char* a_japaneseHelp) {
+				MenuFramework::SameLine();
+				const auto selected = tdmFocusSettings.profile == a_profile;
+				const auto visible = std::string(selected ? "*" : "") + Localized(a_english, a_japanese);
+				const auto label = visible + "##" + a_id;
+				const auto pressed = MenuFramework::Button(label.c_str());
+				MenuFramework::ItemTooltip(Localized(a_englishHelp, a_japaneseHelp));
+				if (pressed && !selected) {
+					tdmFocusSettings.profile = a_profile;
+					return true;
+				}
+				return false;
+			};
+			changed |= profileButton(
+				"Standard", "標準", "TDMProfileStandard", 0U,
+				"Uses the same balanced lock-on depth as Test 4.",
+				"Test 4と同じ、バランス型のロックオン深度です。");
+			changed |= profileButton(
+				"Smooth", "なだらか", "TDMProfileSmooth", 1U,
+				"Uses a gentler lens and widens the clear range as target distance increases.",
+				"穏やかなレンズを使い、対象が遠いほど鮮明な範囲を広げます。");
+			changed |= profileButton(
+				"Emphasis", "強調", "TDMProfileEmphasis", 2U,
+				"Narrows the clear range and strongly separates the target from its background.",
+				"鮮明な範囲を狭め、対象と背景を強く分離します。");
+			changed |= SliderWithHelp(
+				"Lock-On Blur Strength",
+				"強度",
+				&tdmFocusSettings.blurStrength,
+				0.0F,
+				3.0F,
+				"%.2f x",
+				"1.00 is the selected profile's baseline. Lower values widen the clear range and soften the blur; higher values narrow the clear range and strengthen the blur.",
+				"1.00が選択中タイプの基準です。小さいほど鮮明な範囲が広くぼかしが穏やかになり、大きいほど範囲が狭くぼかしが強くなります。");
+			changed |= SliderWithHelp(
+				"Foreground Blur",
+				"手前ぼかし",
+				&tdmFocusSettings.nearBlurStrength,
+				0.0F,
+				1.0F,
+				"%.2f x",
+				"Adds a small dedicated foreground blur during target lock. The default 0.00 keeps the camera-to-target foreground sharp; increasing it can make the focused ground plane visible as a horizontal band.",
+				"ロックオン中の手前側へ専用のぼかしを加えます。初期値0.00ではカメラから対象まで鮮明です。上げると地面にピント面が横帯として見える場合があります。");
+		}
+		if (changed) {
+			ApplyTDMFocus();
+			SetStatus("TDM lock-on focus changed (not saved).", "TDMロックオン時の自動ピント設定を変更しました（INI未保存）。");
+		}
+	}
+
+	void RenderSneakFocusControls()
+	{
+		MenuFramework::SeparatorText(Localized("Sneak Mode", "スニークモード"));
+		bool changed = CheckboxWithHelp(
+			"Enable Sneak Mode",
+			"スニークモードを有効にする",
+			&sneakFocusSettings.enabled,
+			"While sneaking, focuses at the center of the game image with a dedicated depth profile. Dialogue and TDM lock-on focus keep priority; normal focus settings return after sneaking.",
+			"スニーク中、専用の深度設定でゲーム画面中央へピントを合わせます。会話・TDMロックオンの自動ピントを優先し、スニーク終了後は通常設定へ戻ります。");
+		if (sneakFocusSettings.enabled) {
+			MenuFramework::Text(Localized("Type", "タイプ"));
+			const auto profileButton = [&](const char* a_english, const char* a_japanese,
+				const char* a_id, std::uint32_t a_profile, const char* a_englishHelp, const char* a_japaneseHelp) {
+				MenuFramework::SameLine();
+				const auto selected = sneakFocusSettings.profile == a_profile;
+				const auto visible = std::string(selected ? "*" : "") + Localized(a_english, a_japanese);
+				const auto label = visible + "##" + a_id;
+				const auto pressed = MenuFramework::Button(label.c_str());
+				MenuFramework::ItemTooltip(Localized(a_englishHelp, a_japaneseHelp));
+				if (pressed && !selected) {
+					sneakFocusSettings.profile = a_profile;
+					return true;
+				}
+				return false;
+			};
+			changed |= profileButton(
+				"Natural", "自然", "SneakProfileNatural", 0U,
+				"Keeps a wider clear range for unobtrusive exploration and aiming.",
+				"鮮明な範囲を広めに保ち、探索や照準を邪魔しにくい自然な見え方です。");
+			changed |= profileButton(
+				"Suspense", "緊張感", "SneakProfileSuspense", 1U,
+				"Uses a narrower clear range and stronger separation for a tense stealth look.",
+				"鮮明な範囲を狭め、背景を強く分離して緊張感を出します。");
+			changed |= SliderWithHelp(
+				"Sneak Blur Strength",
+				"強度",
+				&sneakFocusSettings.blurStrength,
+				0.0F,
+				3.0F,
+				"%.2f x",
+				"1.00 is the selected type's baseline. Lower values widen the clear range; higher values narrow it and strengthen background blur. Natural gains extra blur above 2.00 without further narrowing its clear range. Foreground blur remains off in this test.",
+				"1.00が選択中タイプの基準です。小さいほど鮮明な範囲が広く、大きいほど範囲が狭く背景ぼかしが強くなります。「自然」は2.00を超えると鮮明範囲をさらに狭めず、ぼかし量だけが強くなります。この試験版では手前ぼかしをOFFに固定します。");
+		}
+		if (changed) {
+			ApplySneakFocus();
+			SetStatus("Sneak mode changed (not saved).", "スニークモード設定を変更しました（INI未保存）。");
 		}
 	}
 
@@ -897,6 +1093,8 @@ namespace
 
 		if (MenuFramework::Button(Localized("Save Startup Settings", "次回起動設定を保存"))) {
 			if (SaveSettings(uiSettings) && SaveTargetFocusSettings(targetFocusSettings) &&
+				SaveTDMFocusSettings(tdmFocusSettings) &&
+				SaveSneakFocusSettings(sneakFocusSettings) &&
 				SaveModeSettings(modeSettings) &&
 				SaveSilhouetteSettings(silhouetteSettings) &&
 				SaveInterfaceSettings(interfaceSettings)) {
@@ -906,12 +1104,14 @@ namespace
 			}
 		}
 		MenuFramework::ItemTooltip(Localized(
-			"Saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, target-tracking, and interface-language values currently applied on screen for the next launch. It does not overwrite any preset slot.",
-			"現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。"));
+			"Saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, TDM lock-on focus, sneak mode, target-tracking, and interface-language values currently applied on screen for the next launch. It does not overwrite any preset slot.",
+			"現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・TDMロックオンフォーカス・スニークモード・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。"));
 		MenuFramework::SameLine();
 		if (MenuFramework::Button(Localized("Reload INI", "INIを再読み込み"))) {
 			uiSettings = LoadSettings();
 			targetFocusSettings = LoadTargetFocusSettings();
+			tdmFocusSettings = LoadTDMFocusSettings();
+			sneakFocusSettings = LoadSneakFocusSettings();
 			modeSettings = LoadModeSettings();
 			silhouetteSettings = LoadSilhouetteSettings();
 			interfaceSettings = LoadInterfaceSettings();
@@ -923,6 +1123,8 @@ namespace
 			DoFRenderer::GetSingleton().SetModeSettings(modeSettings);
 			DoFRenderer::GetSingleton().SetSilhouetteSettings(silhouetteSettings);
 			ApplyTargetFocus();
+			ApplyTDMFocus();
+			ApplySneakFocus();
 			SetStatus(
 				"Reloaded current settings and preset slots from INI.",
 				"現在設定・自動ピント・プリセットをINIから再読み込みしました。");
@@ -1136,6 +1338,61 @@ namespace
 			silhouetteWindowOpen ?
 				"シルエット撮影モードの小窓を閉じます。" :
 				"シルエット撮影モードの小窓を開きます。"));
+		MenuFramework::SameLine();
+		if (MenuFramework::FocusPickerIconButton("##SelectScreenAFFocusPoint")) {
+			BeginFocusPicker();
+		}
+		MenuFramework::ItemTooltip(Localized(
+			uiSettings.enabled ?
+				"Select a focus point on the game image. This temporarily switches to Screen AF; left-click confirms the new mode and position, while right-click/Esc restores the previous focus mode and position." :
+				"Select a Screen AF point even while DoF is off. Live blur preview is unavailable until DoF is enabled. Left-click confirms; right-click/Esc restores the previous focus mode and position.",
+			uiSettings.enabled ?
+				"ゲーム画面上でピント位置を選びます。一時的に画面位置AFへ切り替わり、左クリックで方式と位置を確定、右クリック／Escで元の方式と位置へ戻します。" :
+				"DoFがOFFでも画面位置AFの位置を選択できますが、ぼかしのプレビューは表示されません。左クリックで確定、右クリック／Escで元の方式と位置へ戻します。"));
+		MenuFramework::SameLine();
+		const auto tdmAvailable = TDMIntegration::IsAvailable();
+		if (MenuFramework::TargetLockIconButton(
+				"##ToggleTDMLockFocus", tdmFocusSettings.enabled, tdmAvailable)) {
+			tdmFocusSettings.enabled = !tdmFocusSettings.enabled;
+			ApplyTDMFocus();
+			SetStatus(
+				tdmFocusSettings.enabled ?
+					"TDM lock-on focus enabled (not saved)." :
+					"TDM lock-on focus disabled (not saved).",
+				tdmFocusSettings.enabled ?
+					"TDMロックオン時の自動ピントを有効にしました（INI未保存）。" :
+					"TDMロックオン時の自動ピントを無効にしました（INI未保存）。");
+		}
+		MenuFramework::ItemTooltip(Localized(
+			tdmAvailable ?
+				(tdmFocusSettings.enabled ?
+					"TDM lock-on focus is enabled. Click to disable it." :
+					"TDM lock-on focus is disabled. Click to enable it.") :
+				"True Directional Movement is not detected, so lock-on focus cannot be toggled.",
+			tdmAvailable ?
+				(tdmFocusSettings.enabled ?
+					"TDMロックオン対象への自動ピント：有効。クリックして無効にします。" :
+					"TDMロックオン対象への自動ピント：無効。クリックして有効にします。") :
+				"True Directional Movementが検出されていないため、ロックオン自動ピントは切り替えられません。"));
+		MenuFramework::SameLine();
+		if (MenuFramework::SneakIconButton("##ToggleSneakFocus", sneakFocusSettings.enabled)) {
+			sneakFocusSettings.enabled = !sneakFocusSettings.enabled;
+			ApplySneakFocus();
+			SetStatus(
+				sneakFocusSettings.enabled ?
+					"Sneak mode enabled (not saved)." :
+					"Sneak mode disabled (not saved).",
+				sneakFocusSettings.enabled ?
+					"スニークモードを有効にしました（INI未保存）。" :
+					"スニークモードを無効にしました（INI未保存）。");
+		}
+		MenuFramework::ItemTooltip(Localized(
+			sneakFocusSettings.enabled ?
+				"Sneak Mode is enabled. Click to disable it." :
+				"Sneak Mode is disabled. Click to enable it.",
+			sneakFocusSettings.enabled ?
+				"スニークモード：有効。クリックして無効にします。" :
+				"スニークモード：無効。クリックして有効にします。"));
 		changed |= CheckboxWithHelp(
 			"Use DoF outside dialogue",
 			"会話外でもDoFを使用",
@@ -1155,6 +1412,12 @@ namespace
 			&silhouetteSettings.enabled,
 			"Renders an independent two-color depth silhouette. It works even when the DoF master switch is off and leaves all DoF and preset values unchanged.",
 			"現在のメイン深度を使い、独立した2色のシルエットを描画します。DoF本体がOFFでも使用でき、DoF設定やプリセットは変更しません。");
+		changed |= CheckboxWithHelp(
+			"Smooth Silhouette Edges",
+			"シルエット輪郭を滑らかにする",
+			&silhouetteSettings.smoothEdges,
+			"Softens only the binary silhouette boundary. Turn this off for the original crisp, unblurred edge.",
+			"二値シルエットの境界だけを滑らかにします。従来のくっきりした、ぼかし無しの輪郭に戻す場合はOFFにします。");
 		changed |= ColorEditWithHelp(
 			"Silhouette Color",
 			"シルエット色",
@@ -1200,8 +1463,8 @@ namespace
 				}
 			}
 			MenuFramework::ItemTooltip(Localized(
-				"Saves the current silhouette switch and colors for the next launch. Hotkey assignments are saved immediately when changed.",
-				"現在のシルエットON/OFFと2色を次回起動用に保存します。ホットキーは変更時に自動保存されます。"));
+				"Saves the current silhouette switch, edge smoothing, and colors for the next launch. Hotkey assignments are saved immediately when changed.",
+				"現在のシルエットON/OFF、輪郭の滑らかさ、2色を次回起動用に保存します。ホットキーは変更時に自動保存されます。"));
 			MenuFramework::Text(
 				interfaceSettings.japanese ? statusTextJapanese.c_str() : statusTextEnglish.c_str());
 		}
@@ -1227,12 +1490,50 @@ namespace
 		if (RenderCoreControls()) {
 			ApplyLive();
 		}
+		RenderTDMLockFocusControls();
+		RenderSneakFocusControls();
 		RenderDialogueFocusControls();
 		MenuFramework::SeparatorText(Localized("Preset Management", "プリセット管理"));
 		RenderActions();
 		MenuFramework::Text("Cinematic DoF Standalone 1.0.3");
 		if (fontPushed) {
 			MenuFramework::PopFont();
+		}
+	}
+
+	void __stdcall RenderFocusPickerWindow()
+	{
+		std::scoped_lock lock(uiMutex);
+		if (!focusPickerActive) {
+			if (focusPickerWindow) {
+				focusPickerWindow->isOpen = false;
+			}
+			return;
+		}
+
+		const auto previousX = uiSettings.focusX;
+		const auto previousY = uiSettings.focusY;
+		const auto result = MenuFramework::RenderFocusPicker(uiSettings.focusX, uiSettings.focusY);
+		if (result == MenuFramework::FocusPickerResult::kUnavailable) {
+			FinishFocusPicker(false, true);
+			SetStatus(
+				"Screen AF visual selection could not start with the installed Menu Framework.",
+				"導入中のMenu Frameworkでは画面位置AFの視覚選択を開始できませんでした。");
+			return;
+		}
+		if (!focusPickerAcceptInput) {
+			uiSettings.focusX = focusPickerOriginalX;
+			uiSettings.focusY = focusPickerOriginalY;
+			focusPickerAcceptInput = true;
+			return;
+		}
+		if (!NearlyEqual(previousX, uiSettings.focusX) || !NearlyEqual(previousY, uiSettings.focusY)) {
+			DoFRenderer::GetSingleton().SetSettings(uiSettings);
+		}
+		if (result == MenuFramework::FocusPickerResult::kConfirmed) {
+			FinishFocusPicker(true, true);
+		} else if (result == MenuFramework::FocusPickerResult::kCancelled) {
+			FinishFocusPicker(false, true);
 		}
 	}
 
@@ -1243,6 +1544,8 @@ void CDoF::UI::Initialize(Settings a_settings)
 	std::scoped_lock lock(uiMutex);
 	uiSettings = a_settings;
 	targetFocusSettings = LoadTargetFocusSettings();
+	tdmFocusSettings = LoadTDMFocusSettings();
+	sneakFocusSettings = LoadSneakFocusSettings();
 	modeSettings = LoadModeSettings();
 	silhouetteSettings = LoadSilhouetteSettings();
 	interfaceSettings = LoadInterfaceSettings();
@@ -1253,6 +1556,8 @@ void CDoF::UI::Initialize(Settings a_settings)
 	DoFRenderer::GetSingleton().SetModeSettings(modeSettings);
 	DoFRenderer::GetSingleton().SetSilhouetteSettings(silhouetteSettings);
 	ApplyTargetFocus();
+	ApplyTDMFocus();
+	ApplySneakFocus();
 	initialized = true;
 }
 
@@ -1270,6 +1575,10 @@ void CDoF::UI::TryRegister()
 	if (!silhouetteWindow) {
 		spdlog::warn("SKSE Menu Framework AddWindow is unavailable; using inline silhouette controls");
 	}
+	focusPickerWindow = MenuFramework::AddWindow(RenderFocusPickerWindow, true);
+	if (!focusPickerWindow) {
+		spdlog::warn("SKSE Menu Framework AddWindow is unavailable; Screen AF visual picker disabled");
+	}
 	registered = true;
 	spdlog::info("Registered SKSE Menu Framework UI (framework API {:.1f})", MenuFramework::GetVersion());
 }
@@ -1278,6 +1587,12 @@ void CDoF::UI::HandleKeyboardKey(std::uint32_t a_keyCode)
 {
 	std::scoped_lock lock(uiMutex);
 	if (a_keyCode == 0 || a_keyCode > 0xFFu) {
+		return;
+	}
+	if (focusPickerActive && a_keyCode == kEscapeKey) {
+		// Menu Framework also consumes Esc after this hook. Do not reopen its main
+		// window here, otherwise the framework closes it again in the same event.
+		FinishFocusPicker(false, false);
 		return;
 	}
 

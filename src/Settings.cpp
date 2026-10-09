@@ -5,6 +5,8 @@ namespace
 	constexpr auto kPath = L"Data\\SKSE\\Plugins\\CinematicDoFStandalone.ini";
 	constexpr auto kSection = L"DepthOfField";
 	constexpr auto kTargetFocusSection = L"TargetFocus";
+	constexpr auto kTDMFocusSection = L"TDMLockFocus";
+	constexpr auto kSneakFocusSection = L"SneakFocus";
 	constexpr auto kModeSection = L"Modes";
 	constexpr auto kSilhouetteSection = L"Silhouette";
 	constexpr auto kInterfaceSection = L"Interface";
@@ -307,6 +309,46 @@ bool CDoF::SaveTargetFocusSettings(const TargetFocusSettings& a_settings)
 	return success;
 }
 
+CDoF::TDMFocusSettings CDoF::LoadTDMFocusSettings()
+{
+	TDMFocusSettings result{};
+	result.enabled = ReadBool(kTDMFocusSection, L"Enabled", result.enabled);
+	result.profile = std::min(ReadUInt(kTDMFocusSection, L"Profile", result.profile), 2U);
+	result.blurStrength = Clamp(ReadFloat(kTDMFocusSection, L"BlurStrength", result.blurStrength), 0.0F, 3.0F);
+	result.nearBlurStrength = Clamp(ReadFloat(kTDMFocusSection, L"NearBlurStrength", result.nearBlurStrength), 0.0F, 1.0F);
+	return result;
+}
+
+bool CDoF::SaveTDMFocusSettings(const TDMFocusSettings& a_settings)
+{
+	bool success = true;
+	success = WriteBool(kTDMFocusSection, L"Enabled", a_settings.enabled) && success;
+	success = WriteUInt(kTDMFocusSection, L"Profile", std::min(a_settings.profile, 2U)) && success;
+	success = WriteFloat(kTDMFocusSection, L"BlurStrength", std::clamp(a_settings.blurStrength, 0.0F, 3.0F)) && success;
+	success = WriteFloat(kTDMFocusSection, L"NearBlurStrength", std::clamp(a_settings.nearBlurStrength, 0.0F, 1.0F)) && success;
+	WritePrivateProfileStringW(nullptr, nullptr, nullptr, kPath);
+	return success;
+}
+
+CDoF::SneakFocusSettings CDoF::LoadSneakFocusSettings()
+{
+	SneakFocusSettings result{};
+	result.enabled = ReadBool(kSneakFocusSection, L"Enabled", result.enabled);
+	result.profile = std::min(ReadUInt(kSneakFocusSection, L"Profile", result.profile), 1U);
+	result.blurStrength = Clamp(ReadFloat(kSneakFocusSection, L"BlurStrength", result.blurStrength), 0.0F, 3.0F);
+	return result;
+}
+
+bool CDoF::SaveSneakFocusSettings(const SneakFocusSettings& a_settings)
+{
+	bool success = true;
+	success = WriteBool(kSneakFocusSection, L"Enabled", a_settings.enabled) && success;
+	success = WriteUInt(kSneakFocusSection, L"Profile", std::min(a_settings.profile, 1U)) && success;
+	success = WriteFloat(kSneakFocusSection, L"BlurStrength", std::clamp(a_settings.blurStrength, 0.0F, 3.0F)) && success;
+	WritePrivateProfileStringW(nullptr, nullptr, nullptr, kPath);
+	return success;
+}
+
 CDoF::ModeSettings CDoF::LoadModeSettings()
 {
 	ModeSettings result{};
@@ -331,6 +373,7 @@ CDoF::SilhouetteSettings CDoF::LoadSilhouetteSettings()
 {
 	SilhouetteSettings result{};
 	result.enabled = ReadBool(kSilhouetteSection, L"Enabled", result.enabled);
+	result.smoothEdges = ReadBool(kSilhouetteSection, L"SmoothEdges", result.smoothEdges);
 	result.foregroundColor = {
 		Clamp(ReadFloat(kSilhouetteSection, L"ForegroundR", result.foregroundColor[0]), 0.0F, 1.0F),
 		Clamp(ReadFloat(kSilhouetteSection, L"ForegroundG", result.foregroundColor[1]), 0.0F, 1.0F),
@@ -342,8 +385,9 @@ CDoF::SilhouetteSettings CDoF::LoadSilhouetteSettings()
 		Clamp(ReadFloat(kSilhouetteSection, L"BackgroundB", result.backgroundColor[2]), 0.0F, 1.0F)
 	};
 	spdlog::info(
-		"Silhouette settings loaded: enabled={}, foreground=({:.3f}, {:.3f}, {:.3f}), background=({:.3f}, {:.3f}, {:.3f})",
+		"Silhouette settings loaded: enabled={}, smoothEdges={}, foreground=({:.3f}, {:.3f}, {:.3f}), background=({:.3f}, {:.3f}, {:.3f})",
 		result.enabled,
+		result.smoothEdges,
 		result.foregroundColor[0], result.foregroundColor[1], result.foregroundColor[2],
 		result.backgroundColor[0], result.backgroundColor[1], result.backgroundColor[2]);
 	return result;
@@ -353,6 +397,7 @@ bool CDoF::SaveSilhouetteSettings(const SilhouetteSettings& a_settings)
 {
 	bool success = true;
 	success = WriteBool(kSilhouetteSection, L"Enabled", a_settings.enabled) && success;
+	success = WriteBool(kSilhouetteSection, L"SmoothEdges", a_settings.smoothEdges) && success;
 	success = WriteFloat(kSilhouetteSection, L"ForegroundR", std::clamp(a_settings.foregroundColor[0], 0.0F, 1.0F)) && success;
 	success = WriteFloat(kSilhouetteSection, L"ForegroundG", std::clamp(a_settings.foregroundColor[1], 0.0F, 1.0F)) && success;
 	success = WriteFloat(kSilhouetteSection, L"ForegroundB", std::clamp(a_settings.foregroundColor[2], 0.0F, 1.0F)) && success;

@@ -2,6 +2,7 @@
 #include "DoFUI.h"
 #include "HotkeyInput.h"
 #include "Settings.h"
+#include "TDMIntegration.h"
 
 namespace
 {
@@ -66,6 +67,7 @@ namespace
 			return;
 		}
 		if (a_message->type == SKSE::MessagingInterface::kPostLoad) {
+			CDoF::TDMIntegration::Initialize();
 			CDoF::UI::TryRegister();
 		} else if (a_message->type == SKSE::MessagingInterface::kDataLoaded) {
 			CDoF::HotkeyInput::Register();

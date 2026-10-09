@@ -184,6 +184,8 @@ namespace CDoF
 		bool useStandaloneNearFocusAssist_{ false };
 		bool loggedTargetGuard_{ false };
 		bool loggedTargetNearFocusAssist_{ false };
+		bool loggedExperimentalTransparencyDepth_{ false };
+		bool loggedExperimentalTransparencyDepthUnavailable_{ false };
 		bool loggedRenderAreaDiagnostics_{ false };
 		bool dialogueOnlyPrewarmed_{ false };
 		bool focusPickerActive_{ false };

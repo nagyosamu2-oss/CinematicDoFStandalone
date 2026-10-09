@@ -1241,6 +1241,29 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		D3D11_TEXTURE2D_DESC inputDescription{};
 		mainTarget.texture->GetDesc(&inputDescription);
 		const auto renderArea = GetActiveRenderArea(context, inputDescription);
+		// Test4 is a dual-depth experiment: the post-Z-prepass copy supplies the
+		// farther background depth used by the ordinary DoF path, while the current
+		// main depth supplies the nearer transparent-subject surface used by the
+		// protection mask. Passing mainDepth for both inputs makes their difference
+		// identically zero, so the live checkbox cannot have any visible effect.
+		// Keep the completed renderer on mainDepth while the option is OFF, and
+		// select the fallback only for the explicitly enabled experiment.
+		if (experimentalTransparencySettings_.enabled) {
+			auto experimentalDepth =
+				depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
+			if (IsCompatibleDepth(experimentalDepth, inputDescription)) {
+				depth = experimentalDepth;
+				if (!loggedExperimentalTransparencyDepth_) {
+					loggedExperimentalTransparencyDepth_ = true;
+					spdlog::info(
+						"Experimental Test4 transparency enabled with post-Z-prepass depth plus current main-depth protection");
+				}
+			} else if (!loggedExperimentalTransparencyDepthUnavailable_) {
+				loggedExperimentalTransparencyDepthUnavailable_ = true;
+				spdlog::warn(
+					"Experimental Test4 transparency requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
+			}
+		}
 		if (!depthPathChecked_) {
 			const auto runtimeSaoEnabled = ReadDisplayBool("bSAOEnable:Display");
 			const auto runtimeReflectionsEnabled = ReadDisplayBool("bScreenSpaceReflectionEnabled:Display");

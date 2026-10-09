@@ -858,8 +858,8 @@ namespace
 			};
 			changed |= profileButton(
 				"Standard", "標準", "TDMProfileStandard", 0U,
-				"Uses the same balanced lock-on depth as Test 4.",
-				"Test 4と同じ、バランス型のロックオン深度です。");
+				"Uses the balanced lock-on depth profile.",
+				"バランス型のロックオン深度です。");
 			changed |= profileButton(
 				"Smooth", "なだらか", "TDMProfileSmooth", 1U,
 				"Uses a gentler lens and widens the clear range as target distance increases.",
@@ -933,8 +933,8 @@ namespace
 				0.0F,
 				3.0F,
 				"%.2f x",
-				"1.00 is the selected type's baseline. Lower values widen the clear range; higher values narrow it and strengthen background blur. Natural gains extra blur above 2.00 without further narrowing its clear range. Foreground blur remains off in this test.",
-				"1.00が選択中タイプの基準です。小さいほど鮮明な範囲が広く、大きいほど範囲が狭く背景ぼかしが強くなります。「自然」は2.00を超えると鮮明範囲をさらに狭めず、ぼかし量だけが強くなります。この試験版では手前ぼかしをOFFに固定します。");
+				"1.00 is the selected type's baseline. Lower values widen the clear range; higher values narrow it and strengthen background blur. Natural gains extra blur above 2.00 without further narrowing its clear range. Foreground blur remains disabled in Sneak Mode.",
+				"1.00が選択中タイプの基準です。小さいほど鮮明な範囲が広く、大きいほど範囲が狭く背景ぼかしが強くなります。「自然」は2.00を超えると鮮明範囲をさらに狭めず、ぼかし量だけが強くなります。スニークモード中の手前ぼかしはOFFです。");
 		}
 		if (changed) {
 			ApplySneakFocus();
@@ -970,13 +970,13 @@ namespace
 		changed |= modeButton(
 			1U,
 			"TransparencyMode1",
-			"Mode 1 is the soft treatment: it keeps the Test6 boundary blur but intentionally omits final fine-detail recovery, blending the background behind hair more strongly.",
-			"モード1は柔らか処理です。Test6の境界ぼかしを保ちつつ最終の細部復元を行わず、髪の後ろの背景をより強く馴染ませます。");
+			"Mode 1 blends the background behind hair strongly and softly. It gives the smoothest transition, while transparent materials such as veils may become softer.",
+			"モード1は髪の後ろの背景を強く柔らかく馴染ませます。最も滑らかな移行になりますが、ベールなどの透過素材も柔らかくなります。");
 		changed |= modeButton(
 			2U,
 			"TransparencyMode2",
-			"Mode 2 uses the Test8 hybrid treatment: it adds restrained interior recovery and the Test7-style uniform sky/foliage transition during strong blur.",
-			"モード2はTest8のハイブリッド処理です。透過面の内側も控えめに復元し、強いぼかし時はTest7方式の空・枝葉の均一遷移を加えます。");
+			"Mode 2 blends hair while preserving more transparency, shape, and interior detail. During strong blur it also keeps sky and foliage transitions even and protects moon boundaries.",
+			"モード2は透過・形・内側の細部をより保ちながら髪を馴染ませます。強いぼかし時は空と枝葉の移行を均一にし、月の境界も保護します。");
 		if (changed) {
 			ApplyExperimentalTransparency();
 			SetStatus(
@@ -1158,8 +1158,8 @@ namespace
 			}
 		}
 		MenuFramework::ItemTooltip(Localized(
-			"Saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, TDM lock-on focus, sneak mode, experimental transparency path, target-tracking, and interface-language values currently applied on screen for the next launch. It does not overwrite any preset slot.",
-			"現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・TDMロックオンフォーカス・スニークモード・実験透過処理・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。"));
+			"Saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, TDM lock-on focus, sneak mode, hair blending, target-tracking, and interface-language values currently applied on screen for the next launch. It does not overwrite any preset slot.",
+			"現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・TDMロックオンフォーカス・スニークモード・髪の馴染ませ・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。"));
 		MenuFramework::SameLine();
 		if (MenuFramework::Button(Localized("Reload INI", "INIを再読み込み"))) {
 			uiSettings = LoadSettings();

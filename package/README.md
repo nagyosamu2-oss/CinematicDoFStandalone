@@ -1,6 +1,6 @@
 # CinematicDoFStandalone 1.0.3
 
-> **Version 1.0.3:** transparent-material depth handling is stable under HDR0/HDR1, HDR0 near-blur coverage is preserved in an alpha-capable intermediate, and `Keep Sky Sharp` now prevents sky-color leakage while softly compositing thin geometry at the sky boundary. Existing presets and INIs remain compatible.
+> **Version 1.0.3:** transparent-material and subject-edge handling is stable under HDR0/HDR1, `Keep Sky Sharp` protects sky and moon boundaries, and the optional two-mode `Blend Hair` feature naturally blurs scenery behind hair. Existing presets and INIs remain compatible.
 
 ## 日本語
 
@@ -17,6 +17,7 @@ Jiaye氏のCommunity Shaders AIOを基に、Cinematic DoFを単独で利用で�
 - 通常時のDoFを止め、会話中だけDoFを使用する独立オプション
 - 1人称視点で手前ぼかしを無効にするオプション
 - 地形との境界を滑らかに保ちながら空と遠端深度の月をDoFから除外する、プリセット保存対応のオプション
+- 髪の後ろの背景を自然にぼかす「髪を馴染ませる」。強く柔らかいモード1と、透過・形・細部をより保つモード2を選択可能
 - DoF設定やプリセットを変更せず、深度を独立した2色画像へ変換するシルエット撮影モード
 - 近距離の精度を保ったまま0.1～2000mを扱える、対数操作の「ピント距離」
 - 未割り当てを初期値とするDoF ON/OFFキーボードホットキー
@@ -65,6 +66,7 @@ SKSE Menu Frameworkを導入している場合、ゲーム中にF1を押し、`C
 - DoFホットキー：「DoFを有効にする」の右側にあるホットキーボタンを押し、登録したいキーボードのキーを押します。Escで登録を中止、BackspaceまたはDeleteで登録を解除できます。
 - 会話限定DoF：「DoFを有効にする」をON、「会話外でもDoFを使用」をOFF、「会話中の被写体にピントを合わせる」をONにします。
 - 空の除外：「詳細設定を表示」の右側にある「空を鮮明に保つ」で切り替えます。互換用の基準初期値はOFFです。
+- 髪の馴染ませ：上部の「髪を馴染ませる」をONにし、1または2を選びます。1は強く柔らかく、2は透過と形をより保って馴染ませます。初期値はOFFです。
 - シルエット撮影：DoFホットキー右側の白黒円アイコンから小窓を開き、前景色・背景色・専用ホットキーを設定します。初期色は完全な黒／白です。DoF本体がOFFでも使用できます。
 
 ホットキーの割り当てはINIへ保存され、プリセットには含まれません。ホットキーで切り替えたDoF／シルエットのON/OFF状態は自動保存されません。Skyrim本体や他MODと同じキーを割り当てると、両方の操作が実行される場合があります。
@@ -88,13 +90,14 @@ SKSE Menu Frameworkを導入している場合、ゲーム中にF1を押し、`C
 - プリセット番号／「適用」：保存済みのDoF・会話フォーカス・対象追従設定を現在映像へ適用します。プリセット枠と次回起動設定は変更しません。
 - 現在値を保存：現在映像へ適用中のDoF・会話フォーカス・対象追従設定を、そのプリセット枠へ保存します。次回起動設定とUI言語は変更しません。
 - 初期値へ戻す：同じボタンを2回押すと、配布時の初期値を保存せず映像へ適用します。プリセット枠へ保存する場合は、その後「現在値を保存」を押します。
-- 次回起動設定を保存：現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。
+- 次回起動設定を保存：現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・TDMロックオン・スニークモード・髪の馴染ませ・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。
 - INIを再読み込み：保存済みの次回起動設定とプリセット枠をINIから読み直します。
 
 ### 補足
 
 - 1人称で通常プレイする場合は、詳細設定の「一人称の手前ぼかし」をOFFにすると武器や手元が鮮明になります。
 - 「空を鮮明に保つ」は未描画の深度から空を判定し、同じスイッチで遠端深度の月も保護します。空色を山・建造物・樹木へ運ばず、空との境界だけを局所被覆率で滑らかに合成します。既存INIや既存プリセットにこの設定がない場合はOFFとして読み込みます。
+- 「髪を馴染ませる」は通常描画と分離されています。OFFでは追加方式を実行しません。モード1は最も滑らかですが透過素材も柔らかくなり、モード2は透過・形・細部と月境界をより保ちます。
 - シルエット撮影モードは現在のメイン深度だけで前景／背景を分類します。水面、月、半透明物、パーティクルは、そのフレームでメイン深度へ書き込まれたかどうかに従います。
 - 「絞り形状ボケ」は初期状態でOFFです。ONにすると、強くピンぼけした明るい点が設定した絞り形状に近づきます。「明るいボケの強調」は、ぼかし平均で薄まる前の明点へ近づける量を調整します。元映像の明点を超える無制限な発光を追加する機能ではありません。
 - 非常に大きなボケを低い「ぼかし品質」で描画すると、サンプル密度不足によりボケが輪や点へ分裂して見える場合があります。これは既知の制限です。必要に応じて品質を上げるか、最大ぼかしを弱めてください。
@@ -117,6 +120,7 @@ CinematicDoFStandalone is an SKSE plugin that makes Cinematic DoF available as a
 - A preset-independent option to use DoF only during dialogue
 - Option to disable near blur in first person
 - A preset-saved option that excludes clear-depth sky and far-depth moon pixels from DoF while feathering the boundary against geometry
+- Optional `Blend Hair` processing with a strong soft mode and a second mode that preserves more transparency, shape, and detail
 - An independent two-colour Silhouette Photo Mode that does not modify DoF settings or presets
 - A logarithmic Fixed Focus distance control covering 0.1-2000 m without sacrificing short-range precision
 - An optional, unassigned-by-default keyboard hotkey for toggling DoF
@@ -164,6 +168,7 @@ With SKSE Menu Framework installed, press F1 in game and open `Cinematic DoF Sta
 - DoF Hotkey: press the hotkey button beside `Enable DoF`, then press the keyboard key you want to assign. Esc cancels assignment; Backspace or Delete clears it.
 - Dialogue-only DoF: enable `Enable DoF`, disable `Use DoF outside dialogue`, and keep dialogue focus enabled.
 - Sky exclusion: toggle `Keep Sky Sharp` to the right of `Show Advanced Settings`. Its compatibility default is off.
+- Hair blending: enable `Blend Hair` in the top row, then select 1 or 2. Mode 1 is stronger and softer; mode 2 preserves more transparency and shape. It defaults to off.
 - Silhouette Photo Mode: open its compact window with the black/white circle icon beside the DoF hotkey, then choose foreground/background colours and an optional hotkey. Its default palette is pure black and white. It also works while DoF itself is off.
 
 Hotkey assignments are saved to the INI and are not part of a preset. Toggling DoF or Silhouette Mode with a hotkey does not automatically save the enabled state. If the same key is used by Skyrim or another mod, both actions may run.
@@ -177,13 +182,14 @@ When updating from an older version, Custom 1 and Custom 2 keep their original n
 - Preset number / Apply: applies the stored DoF, dialogue-focus, and target-tracking values to the current image. It does not change the preset slot or startup settings.
 - Store Current: saves the currently applied DoF, dialogue-focus, and target-tracking values in that preset slot. It does not change startup settings or the UI language.
 - Restore Defaults: press twice to apply the bundled defaults without saving. Press Store Current afterward if you want to overwrite the preset slot.
-- Save Startup Settings: saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, target-tracking, and UI-language values for the next launch. It does not overwrite any preset slot.
+- Save Startup Settings: saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, TDM lock-on, Sneak Mode, hair blending, target-tracking, and UI-language values for the next launch. It does not overwrite any preset slot.
 - Reload INI: reloads the saved startup settings and saved preset slots from the INI.
 
 ### Notes
 
 - For normal first-person play, disable `First-Person Near Blur` in Advanced Settings to keep weapons and hands sharp.
 - `Keep Sky Sharp` identifies sky from unwritten depth and protects far-depth moon pixels through the same switch. It rejects sky-color leakage into geometry and uses local coverage for a soft one-pixel sky boundary. Existing INIs and presets without the setting load it as disabled.
+- `Blend Hair` is separate from standard rendering and does not execute while disabled. Mode 1 gives the smoothest blend but also softens transparency; mode 2 preserves more transparency, shape, detail, and moon boundaries.
 - Silhouette Photo Mode classifies foreground/background solely from the current main depth. Water, moons, transparent objects, and particles follow whether they wrote main depth in that frame.
 - `Aperture Bokeh` is off by default. When enabled, strongly defocused bright points take on the selected aperture shape. `Highlight Boost` controls how far the blurred result moves toward the brightest eligible shaped sample. It does not add unrestricted brightness beyond the sampled source highlight.
 - Very large blur discs rendered at low `Blur Quality` can separate into visible rings or points because the gather has insufficient sample density. This is a known limitation. Raise quality or reduce maximum blur if needed.

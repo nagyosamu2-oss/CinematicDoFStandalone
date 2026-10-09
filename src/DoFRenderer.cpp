@@ -420,12 +420,12 @@ bool CDoF::DoFRenderer::CompileShaders(ID3D11Device* a_device)
 		a_device,
 		L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof_test6.cs.hlsl",
 		test6Shaders_,
-		"hair blending mode 1 (soft Test6 boundary)");
+		"hair blending mode 1 (soft blend)");
 	test8ShadersReady_ = CompileShaderSet(
 		a_device,
 		L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof_test8.cs.hlsl",
 		test8Shaders_,
-		"hair blending mode 2 (Test8)");
+		"hair blending mode 2 (detail-preserving blend)");
 	if (!test6ShadersReady_ || !test8ShadersReady_) {
 		spdlog::warn(
 			"One or more optional hair-blending shader sets could not be prepared; unavailable modes will fall back to stable rendering");
@@ -1294,13 +1294,13 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				if (!loggedExperimentalTransparencyDepth_) {
 					loggedExperimentalTransparencyDepth_ = true;
 					spdlog::info(
-						"Experimental transparency mode {} enabled with post-Z-prepass depth plus current main-depth protection",
+						"Hair blending mode {} enabled with post-Z-prepass depth plus current main-depth protection",
 						experimentalTransparencySettings_.mode);
 				}
 			} else if (!loggedExperimentalTransparencyDepthUnavailable_) {
 				loggedExperimentalTransparencyDepthUnavailable_ = true;
 				spdlog::warn(
-					"Experimental transparency requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
+					"Hair blending requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
 			}
 		}
 		if (!depthPathChecked_) {

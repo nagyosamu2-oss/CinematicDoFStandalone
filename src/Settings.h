@@ -86,9 +86,9 @@ namespace CDoF
 
 	struct ExperimentalTransparencySettings
 	{
-		// Optional personal research paths. Keep disabled so the completed 1.0.3
-		// rendering path remains the default. Mode 1 is the soft Test6-boundary
-		// treatment; mode 2 is the complete Test8 treatment.
+		// Public hair-blending option. The legacy type and INI section names remain
+		// unchanged for compatibility. Disabled uses the standard rendering path;
+		// mode 1 is the soft blend and mode 2 preserves more transparency detail.
 		bool enabled{ false };
 		std::uint32_t mode{ 1U };
 	};

@@ -84,6 +84,13 @@ namespace CDoF
 		std::array<float, 3> backgroundColor{ 1.0F, 1.0F, 1.0F };
 	};
 
+	struct ExperimentalTransparencySettings
+	{
+		// Optional Test4 research path. Keep disabled so the completed 1.0.3
+		// rendering path remains the default.
+		bool enabled{ false };
+	};
+
 	struct InterfaceSettings
 	{
 		bool japanese{ false };
@@ -111,6 +118,8 @@ namespace CDoF
 	bool SaveModeSettings(const ModeSettings& a_settings);
 	SilhouetteSettings LoadSilhouetteSettings();
 	bool SaveSilhouetteSettings(const SilhouetteSettings& a_settings);
+	ExperimentalTransparencySettings LoadExperimentalTransparencySettings();
+	bool SaveExperimentalTransparencySettings(const ExperimentalTransparencySettings& a_settings);
 	TargetFocusSettings LoadPresetTargetFocusSettings(
 		const wchar_t* a_section,
 		TargetFocusSettings a_defaults);

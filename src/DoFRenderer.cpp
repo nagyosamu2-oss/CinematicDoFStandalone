@@ -100,7 +100,7 @@ namespace
 		float headGuardRadius;
 		std::uint32_t keepSkySharp;
 		Float2 targetGuardAxis;
-		std::uint32_t padding4;
+		std::uint32_t experimentalTransparencyEnabled;
 		std::uint32_t padding5;
 	};
 	static_assert(sizeof(DoFConstants) == 144);
@@ -336,6 +336,12 @@ void CDoF::DoFRenderer::SetSneakFocus(SneakFocusSettings a_settings)
 	sneakFocusSettings_ = std::move(a_settings);
 }
 
+void CDoF::DoFRenderer::SetExperimentalTransparency(ExperimentalTransparencySettings a_settings)
+{
+	std::scoped_lock lock(mutex_);
+	experimentalTransparencySettings_ = a_settings;
+}
+
 void CDoF::DoFRenderer::SetFocusPickerActive(bool a_active)
 {
 	std::scoped_lock lock(mutex_);
@@ -533,6 +539,14 @@ bool CDoF::DoFRenderer::EnsureResources(
 	const auto nearBlurColor = color == DXGI_FORMAT_R11G11B10_FLOAT ?
 		DXGI_FORMAT_R16G16B16A16_FLOAT :
 		color;
+	// The optional Test4 path carries a conservative transparency mask in alpha
+	// through the far-gather pyramid. HDR0's R11G11B10 target has no alpha, so use
+	// the same alpha-capable intermediate already proven by the near-blur path.
+	// Keeping this allocation stable permits live ON/OFF switching without a
+	// resource rebuild; the OFF shader branch preserves the completed RGB math.
+	const auto farGatherSourceColor = color == DXGI_FORMAT_R11G11B10_FLOAT ?
+		DXGI_FORMAT_R16G16B16A16_FLOAT :
+		color;
 
 	const auto createColor = [&](Texture& a_texture, bool a_half) {
 		return CreateTexture(a_device, a_texture, color, a_half ? halfWidth : width, a_half ? halfHeight : height);
@@ -541,10 +555,10 @@ bool CDoF::DoFRenderer::EnsureResources(
 		return CreateTexture(a_device, a_texture, DXGI_FORMAT_R32_FLOAT, a_half ? halfWidth : width, a_half ? halfHeight : height);
 	};
 
-	if (!createColor(resources_.preBlurred, true) ||
-		!CreateTexture(a_device, resources_.farGatherColor1, color, quarterWidth, quarterHeight) ||
-		!CreateTexture(a_device, resources_.farGatherColor2, color, eighthWidth, eighthHeight) ||
-		!CreateTexture(a_device, resources_.farGatherColor3, color, sixteenthWidth, sixteenthHeight) ||
+	if (!CreateTexture(a_device, resources_.preBlurred, farGatherSourceColor, halfWidth, halfHeight) ||
+		!CreateTexture(a_device, resources_.farGatherColor1, farGatherSourceColor, quarterWidth, quarterHeight) ||
+		!CreateTexture(a_device, resources_.farGatherColor2, farGatherSourceColor, eighthWidth, eighthHeight) ||
+		!CreateTexture(a_device, resources_.farGatherColor3, farGatherSourceColor, sixteenthWidth, sixteenthHeight) ||
 		!createColor(resources_.farBlurred, true) ||
 		!CreateTexture(a_device, resources_.nearBlurred, nearBlurColor, halfWidth, halfHeight) ||
 		!createColor(resources_.blurredFiltered, true) ||
@@ -1458,7 +1472,7 @@ void CDoF::DoFRenderer::Dispatch(
 		.keepSkySharp = a_settings.keepSkySharp ? 1U : 0U,
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
-		.padding4 = 0U,
+		.experimentalTransparencyEnabled = experimentalTransparencySettings_.enabled ? 1U : 0U,
 		.padding5 = 0U
 	};
 	const SharedConstants sharedData{
@@ -1574,6 +1588,8 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[4] = resources_.cocBlur2.srv.Get();
 	// Pre-blur performs the general bright-bokeh amplification. Expose main depth
 	// so clear sky can bypass that amplification when Keep Sky Sharp is enabled.
+	srvs[1] = resources_.previousFocus.srv.Get();
+	srvs[2] = a_depth;
 	srvs[11] = a_skyMaskDepth;
 	uavs[0] = resources_.preBlurred.uav.Get();
 	bindAndDispatch(shaders_.blur.Get(), halfWidth, halfHeight);
@@ -1646,6 +1662,10 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[0] = resources_.postSmooth.srv.Get();
 	srvs[3] = resources_.coc.srv.Get();
 	srvs[7] = resources_.postSmooth2.srv.Get();
+	// The experimental final pass reads the untouched scene for detail bands and
+	// the aligned half-resolution transparency mask. OFF ignores both bindings.
+	srvs[8] = a_color;
+	srvs[9] = resources_.preBlurred.srv.Get();
 	srvs[11] = a_skyMaskDepth;
 	uavs[0] = resources_.output.uav.Get();
 	bindAndDispatch(shaders_.postSmoothing2AndFocusing.Get(), fullWidth, fullHeight);

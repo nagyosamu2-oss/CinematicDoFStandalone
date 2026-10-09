@@ -17,6 +17,7 @@ namespace CDoF
 			Settings a_dialogueLensSettings);
 		void SetTDMFocus(TDMFocusSettings a_settings);
 		void SetSneakFocus(SneakFocusSettings a_settings);
+		void SetExperimentalTransparency(ExperimentalTransparencySettings a_settings);
 		void SetFocusPickerActive(bool a_active);
 		void ApplyBeforePostProcessing();
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
@@ -163,6 +164,7 @@ namespace CDoF
 		TargetFocusSettings targetFocusSettings_{};
 		TDMFocusSettings tdmFocusSettings_{};
 		SneakFocusSettings sneakFocusSettings_{};
+		ExperimentalTransparencySettings experimentalTransparencySettings_{};
 		Settings dialogueLensSettings_{};
 		Resources resources_{};
 		Shaders shaders_{};

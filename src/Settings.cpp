@@ -9,6 +9,7 @@ namespace
 	constexpr auto kSneakFocusSection = L"SneakFocus";
 	constexpr auto kModeSection = L"Modes";
 	constexpr auto kSilhouetteSection = L"Silhouette";
+	constexpr auto kExperimentalTransparencySection = L"ExperimentalTransparency";
 	constexpr auto kInterfaceSection = L"Interface";
 	constexpr auto kHotkeySection = L"Hotkeys";
 
@@ -407,6 +408,24 @@ bool CDoF::SaveSilhouetteSettings(const SilhouetteSettings& a_settings)
 	WritePrivateProfileStringW(nullptr, nullptr, nullptr, kPath);
 	if (success) {
 		spdlog::info("Silhouette settings saved");
+	}
+	return success;
+}
+
+CDoF::ExperimentalTransparencySettings CDoF::LoadExperimentalTransparencySettings()
+{
+	ExperimentalTransparencySettings result{};
+	result.enabled = ReadBool(kExperimentalTransparencySection, L"Enabled", result.enabled);
+	spdlog::info("Experimental Test4 transparency path loaded: enabled={}", result.enabled);
+	return result;
+}
+
+bool CDoF::SaveExperimentalTransparencySettings(const ExperimentalTransparencySettings& a_settings)
+{
+	const auto success = WriteBool(kExperimentalTransparencySection, L"Enabled", a_settings.enabled);
+	WritePrivateProfileStringW(nullptr, nullptr, nullptr, kPath);
+	if (success) {
+		spdlog::info("Experimental Test4 transparency path saved: enabled={}", a_settings.enabled);
 	}
 	return success;
 }

@@ -16,6 +16,7 @@ namespace
 	SneakFocusSettings sneakFocusSettings{};
 	ModeSettings modeSettings{};
 	SilhouetteSettings silhouetteSettings{};
+	ExperimentalTransparencySettings experimentalTransparencySettings{};
 	InterfaceSettings interfaceSettings{};
 	HotkeySettings hotkeySettings{};
 	std::mutex uiMutex;
@@ -680,6 +681,11 @@ namespace
 		DoFRenderer::GetSingleton().SetSneakFocus(sneakFocusSettings);
 	}
 
+	void ApplyExperimentalTransparency()
+	{
+		DoFRenderer::GetSingleton().SetExperimentalTransparency(experimentalTransparencySettings);
+	}
+
 	void LoadPresets()
 	{
 		for (auto& preset : presetSlots) {
@@ -936,6 +942,29 @@ namespace
 		}
 	}
 
+	void RenderExperimentalTransparencyControls()
+	{
+		MenuFramework::SeparatorText(Localized(
+			"Experimental Transparency",
+			"透過越し背景ぼかし（実験）"));
+		const auto changed = CheckboxWithHelp(
+			"Enable Test4 Transparency Path",
+			"Test4透過処理を有効にする",
+			&experimentalTransparencySettings.enabled,
+			"Optional personal Test4 research mode. It uses the difference between two depth sources to identify focused transparent hair or veils, blur scenery behind them, and restore only limited subject detail. Detection is heuristic, so some materials may remain soft or may affect nearby background detail. OFF uses the completed stable rendering path.",
+			"個人用のTest4試作処理です。2種類の深度差からピント付近の髪・ベール等を推定し、その後ろをぼかしつつ透過物の限定的な質感だけを戻します。材質フラグではなく推定のため、素材によっては柔らかさが残る、または近くの背景へ影響する場合があります。OFFでは完成版の安定描画経路を使用します。");
+		if (changed) {
+			ApplyExperimentalTransparency();
+			SetStatus(
+				experimentalTransparencySettings.enabled ?
+					"Experimental Test4 transparency path enabled (not saved)." :
+					"Experimental Test4 transparency path disabled; stable rendering restored (not saved).",
+				experimentalTransparencySettings.enabled ?
+					"Test4透過処理を有効にしました（INI未保存）。" :
+					"Test4透過処理を無効にし、完成版の安定描画へ戻しました（INI未保存）。");
+		}
+	}
+
 	void RenderPresetToolbar()
 	{
 		const auto activePreset = FindMatchingPreset();
@@ -1097,6 +1126,7 @@ namespace
 				SaveSneakFocusSettings(sneakFocusSettings) &&
 				SaveModeSettings(modeSettings) &&
 				SaveSilhouetteSettings(silhouetteSettings) &&
+				SaveExperimentalTransparencySettings(experimentalTransparencySettings) &&
 				SaveInterfaceSettings(interfaceSettings)) {
 				SetStatus("Saved startup settings to CinematicDoFStandalone.ini.", "次回起動設定をCinematicDoFStandalone.iniへ保存しました。");
 			} else {
@@ -1104,8 +1134,8 @@ namespace
 			}
 		}
 		MenuFramework::ItemTooltip(Localized(
-			"Saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, TDM lock-on focus, sneak mode, target-tracking, and interface-language values currently applied on screen for the next launch. It does not overwrite any preset slot.",
-			"現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・TDMロックオンフォーカス・スニークモード・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。"));
+			"Saves the master switch, normal-gameplay mode, DoF, silhouette, dialogue-focus, TDM lock-on focus, sneak mode, experimental transparency path, target-tracking, and interface-language values currently applied on screen for the next launch. It does not overwrite any preset slot.",
+			"現在映像へ適用中の主スイッチ・会話外DoF・DoF・シルエット・会話フォーカス・TDMロックオンフォーカス・スニークモード・実験透過処理・対象追従設定とUI言語を、次回起動時の設定として保存します。プリセット枠は上書きしません。"));
 		MenuFramework::SameLine();
 		if (MenuFramework::Button(Localized("Reload INI", "INIを再読み込み"))) {
 			uiSettings = LoadSettings();
@@ -1114,6 +1144,7 @@ namespace
 			sneakFocusSettings = LoadSneakFocusSettings();
 			modeSettings = LoadModeSettings();
 			silhouetteSettings = LoadSilhouetteSettings();
+			experimentalTransparencySettings = LoadExperimentalTransparencySettings();
 			interfaceSettings = LoadInterfaceSettings();
 			hotkeySettings = LoadHotkeySettings();
 			hotkeyCaptureTarget = HotkeyCaptureTarget::kNone;
@@ -1122,6 +1153,7 @@ namespace
 			DoFRenderer::GetSingleton().SetSettings(uiSettings);
 			DoFRenderer::GetSingleton().SetModeSettings(modeSettings);
 			DoFRenderer::GetSingleton().SetSilhouetteSettings(silhouetteSettings);
+			ApplyExperimentalTransparency();
 			ApplyTargetFocus();
 			ApplyTDMFocus();
 			ApplySneakFocus();
@@ -1492,6 +1524,7 @@ namespace
 		}
 		RenderTDMLockFocusControls();
 		RenderSneakFocusControls();
+		RenderExperimentalTransparencyControls();
 		RenderDialogueFocusControls();
 		MenuFramework::SeparatorText(Localized("Preset Management", "プリセット管理"));
 		RenderActions();
@@ -1548,6 +1581,7 @@ void CDoF::UI::Initialize(Settings a_settings)
 	sneakFocusSettings = LoadSneakFocusSettings();
 	modeSettings = LoadModeSettings();
 	silhouetteSettings = LoadSilhouetteSettings();
+	experimentalTransparencySettings = LoadExperimentalTransparencySettings();
 	interfaceSettings = LoadInterfaceSettings();
 	hotkeySettings = LoadHotkeySettings();
 	japaneseFontEnabled = IsJapaneseFontEnabled();
@@ -1555,6 +1589,7 @@ void CDoF::UI::Initialize(Settings a_settings)
 	editingPresetIndex = FindMatchingPreset();
 	DoFRenderer::GetSingleton().SetModeSettings(modeSettings);
 	DoFRenderer::GetSingleton().SetSilhouetteSettings(silhouetteSettings);
+	ApplyExperimentalTransparency();
 	ApplyTargetFocus();
 	ApplyTDMFocus();
 	ApplySneakFocus();

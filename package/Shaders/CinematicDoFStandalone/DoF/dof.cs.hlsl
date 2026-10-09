@@ -165,7 +165,8 @@ cbuffer DoFCB : register(b1)
 	float HeadGuardRadius;
 	uint KeepSkySharp;
 	float2 TargetGuardAxis;
-	uint2 pad4;
+	uint ExperimentalTransparencyEnabled;
+	uint pad5;
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -275,6 +276,97 @@ float GetDepthAtRenderPixel(uint2 renderPixel)
 	float depth = DepthTexture[GetInputPixel(renderPixel)];
 	depth = SharedData::GetScreenDepth(depth) * GAME_UNIT_TO_M * 0.001f;  // in KM
 	return max(depth, 1e-6f);
+}
+
+float GetDualDepthTransparencyCandidate(uint2 renderPixel)
+{
+	if (ExperimentalTransparencyEnabled == 0)
+		return 0.0f;
+
+	// Test4's conservative signal: main depth contains a nearer surface while the
+	// fallback depth sees farther scenery. Restrict it to the current focus
+	// neighbourhood so unrelated distant alpha-tested foliage is not restored.
+	uint2 inputPixel = GetInputPixel(renderPixel);
+	float rawMainDepth = SkyMaskDepthTexture[inputPixel];
+	if (rawMainDepth >= 1.0f)
+		return 0.0f;
+
+	float rawFallbackDepth = DepthTexture[inputPixel];
+	float fallbackDepth = max(SharedData::GetScreenDepth(rawFallbackDepth) * GAME_UNIT_TO_M * 0.001f, 1e-6f);
+	float mainDepth = max(SharedData::GetScreenDepth(rawMainDepth) * GAME_UNIT_TO_M * 0.001f, 1e-6f);
+	float separation = fallbackDepth - mainDepth;
+	float mismatchStart = max(0.00015f, mainDepth * 0.005f);
+	float mismatchFull = max(0.00150f, mainDepth * 0.050f);
+	float mismatch = smoothstep(mismatchStart, mismatchFull, separation);
+
+	float focusDepth = max(TexPreviousFocus[uint2(0, 0)], 1e-6f);
+	float focusDelta = abs(mainDepth - focusDepth);
+	float focusStart = max(0.00025f, focusDepth * 0.050f);
+	float focusEnd = max(0.00250f, focusDepth * 0.350f);
+	float focusNeighbourhood = 1.0f - smoothstep(focusStart, focusEnd, focusDelta);
+	return mismatch * focusNeighbourhood;
+}
+
+void GetOriginalSceneBands(
+	uint2 renderPixel,
+	out float3 fineDetail,
+	out float3 mediumBand,
+	out float fineContrast)
+{
+	// t8 is rebound to the untouched full-resolution scene for the final pass.
+	// Split compact detail from a wider fabric band; never restore the complete
+	// source texel, which would also restore sharp scenery visible through a veil.
+	int2 pixel = int2(renderPixel);
+	float3 centre = TexFarGatherColor1[GetInputPixel(renderPixel)].rgb;
+	float3 innerLowPass = centre * 4.0f;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(1, 0)))].rgb * 2.0f;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(-1, 0)))].rgb * 2.0f;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(0, 1)))].rgb * 2.0f;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(0, -1)))].rgb * 2.0f;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(1, 1)))].rgb;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(-1, 1)))].rgb;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(1, -1)))].rgb;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(-1, -1)))].rgb;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(2, 0)))].rgb;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(-2, 0)))].rgb;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(0, 2)))].rgb;
+	innerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(0, -2)))].rgb;
+	innerLowPass *= 0.05f;
+
+	float3 outerLowPass = 0.0f;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(4, 0)))].rgb;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(-4, 0)))].rgb;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(0, 4)))].rgb;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(0, -4)))].rgb;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(3, 3)))].rgb;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(-3, 3)))].rgb;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(3, -3)))].rgb;
+	outerLowPass += TexFarGatherColor1[GetInputPixel(ClampFullResolutionPixel(pixel + int2(-3, -3)))].rgb;
+	outerLowPass *= 0.125f;
+
+	fineDetail = centre - innerLowPass;
+	mediumBand = innerLowPass - outerLowPass;
+	fineContrast = length(fineDetail) / max(length(centre), 0.10f);
+}
+
+float GetAlignedTransparencyInterior(float2 uv, out float alignedCoverage)
+{
+	// t9 is rebound to the half-resolution pre-blur during the final pass. The
+	// mask is max-reduced, so four-sided support erodes it back to a conservative
+	// continuous transparent interior.
+	uint width;
+	uint height;
+	TexFarGatherColor2.GetDimensions(width, height);
+	float2 texelSize = rcp(float2(max(width, 1u), max(height, 1u)));
+	float2 clampedUV = ClampToTexelCentres(uv, texelSize);
+	float centre = TexFarGatherColor2.SampleLevel(LinearSampler, clampedUV, 0).a;
+	alignedCoverage = saturate(centre);
+	float neighbours = 1.0f;
+	neighbours = min(neighbours, TexFarGatherColor2.SampleLevel(LinearSampler, ClampToTexelCentres(uv + float2(2.0f * texelSize.x, 0.0f), texelSize), 0).a);
+	neighbours = min(neighbours, TexFarGatherColor2.SampleLevel(LinearSampler, ClampToTexelCentres(uv - float2(2.0f * texelSize.x, 0.0f), texelSize), 0).a);
+	neighbours = min(neighbours, TexFarGatherColor2.SampleLevel(LinearSampler, ClampToTexelCentres(uv + float2(0.0f, 2.0f * texelSize.y), texelSize), 0).a);
+	neighbours = min(neighbours, TexFarGatherColor2.SampleLevel(LinearSampler, ClampToTexelCentres(uv - float2(0.0f, 2.0f * texelSize.y), texelSize), 0).a);
+	return alignedCoverage * smoothstep(0.15f, 0.65f, saturate(neighbours));
 }
 
 float GetSkyClearDepthMask(uint2 renderPixel)
@@ -754,6 +846,14 @@ float CalculateSampleWeight(float sampleRadiusInCoC, float ringDistanceInCoC)
 	return saturate(sampleRadiusInCoC - (ringDistanceInCoC * NearFarDistanceCompensation) + 0.5);
 }
 
+float CalculateSampleWeightWithCompensation(
+	float sampleRadiusInCoC,
+	float ringDistanceInCoC,
+	float distanceCompensation)
+{
+	return saturate(sampleRadiusInCoC - (ringDistanceInCoC * distanceCompensation) + 0.5f);
+}
+
 float CalculateFarPlaneCoCCompatibility(float centreCoC, float sampleCoC)
 {
 	// Keep smoothly varying background depth continuous, but suppress taps that
@@ -983,6 +1083,16 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	blurInfo.cocFactorPerPixel = blurPixelSizeLength * blurInfo.farPlaneMaxBlurInPixels;  // not needed for near plane.
 	// Pre Blur
 	float4 color = PerformPreDiscBlur(blurInfo, TexColor);
+	if (ExperimentalTransparencyEnabled != 0)
+	{
+		int2 basePixel = int2(2 * DTid);
+		float transparencyCandidate = 0.0f;
+		transparencyCandidate = max(transparencyCandidate, GetDualDepthTransparencyCandidate(ClampFullResolutionPixel(basePixel + int2(0, 0))));
+		transparencyCandidate = max(transparencyCandidate, GetDualDepthTransparencyCandidate(ClampFullResolutionPixel(basePixel + int2(1, 0))));
+		transparencyCandidate = max(transparencyCandidate, GetDualDepthTransparencyCandidate(ClampFullResolutionPixel(basePixel + int2(0, 1))));
+		transparencyCandidate = max(transparencyCandidate, GetDualDepthTransparencyCandidate(ClampFullResolutionPixel(basePixel + int2(1, 1))));
+		color.a = transparencyCandidate;
+	}
 	RWTexOut[DTid] = color;
 }
 
@@ -1000,13 +1110,28 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 	int2 basePixel = int2(DTid) * 2;
 	int2 sourceMaximum = int2(sourceWidth, sourceHeight) - 1;
-	float4 color = 0.0f;
-	[unroll] for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+	if (ExperimentalTransparencyEnabled == 0)
 	{
-		int2 offset = int2(sampleIndex & 1, sampleIndex >> 1);
-		color += TexColor[clamp(basePixel + offset, int2(0, 0), sourceMaximum)];
+		float4 color = 0.0f;
+		[unroll] for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+		{
+			int2 offset = int2(sampleIndex & 1, sampleIndex >> 1);
+			color += TexColor[clamp(basePixel + offset, int2(0, 0), sourceMaximum)];
+		}
+		RWTexOut[DTid] = color * 0.25f;
+		return;
 	}
-	RWTexOut[DTid] = color * 0.25f;
+
+	float3 reducedColor = 0.0f;
+	float transparencyCandidate = 0.0f;
+	[unroll] for (int experimentalSampleIndex = 0; experimentalSampleIndex < 4; ++experimentalSampleIndex)
+	{
+		int2 offset = int2(experimentalSampleIndex & 1, experimentalSampleIndex >> 1);
+		float4 sampleValue = TexColor[clamp(basePixel + offset, int2(0, 0), sourceMaximum)];
+		reducedColor += sampleValue.rgb;
+		transparencyCandidate = max(transparencyCandidate, sampleValue.a);
+	}
+	RWTexOut[DTid] = float4(reducedColor * 0.25f, transparencyCandidate);
 }
 
 float GetFarGatherMip(float kernelRadiusInPixels, float ringCount)
@@ -1084,6 +1209,15 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float2 currentRingRadiusCoords = ringRadiusDeltaCoords;
 	float cocPerRing = (colorRadius * FarPlaneMaxBlur) / blurInfo.numberOfRings;
 	float gatherMip = GetFarGatherMip(blurInfo.farPlaneMaxBlurInPixels * colorRadius, blurInfo.numberOfRings);
+	float effectiveFarBlurRadius = blurInfo.farPlaneMaxBlurInPixels * colorRadius;
+	float transparencySuppressionRamp = ExperimentalTransparencyEnabled != 0 ?
+		smoothstep(8.0f, 24.0f, effectiveFarBlurRadius) : 0.0f;
+	float centerTransparencyCandidate = ExperimentalTransparencyEnabled != 0 ? saturate(color.a) : 0.0f;
+	float transparencyBoundaryConfidence = smoothstep(0.05f, 0.50f, centerTransparencyCandidate);
+	float adaptiveDistanceCompensation = lerp(
+		NearFarDistanceCompensation,
+		max(NearFarDistanceCompensation, 5.0f),
+		transparencyBoundaryConfidence);
 	float ringDistance = 0;
 	float pointsOnRing = pointsFirstRing;
 	for (float ringIndex = 0; ringIndex < blurInfo.numberOfRings; ringIndex++) {
@@ -1101,7 +1235,11 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			float2 halfResolutionTap = ClampHalfResolutionUV(tapCoords);
 			float sampleRadius = TexCoCInput.SampleLevel(LinearSampler, fullResolutionTap, 0).r;
 			float4 tap = 0;
-			float weight = (sampleRadius >= 0) * ringWeight * CalculateSampleWeight(sampleRadius * FarPlaneMaxBlur, ringDistance);
+			float sampleWeight = CalculateSampleWeight(sampleRadius * FarPlaneMaxBlur, ringDistance);
+			if (ExperimentalTransparencyEnabled != 0)
+				sampleWeight = CalculateSampleWeightWithCompensation(
+					sampleRadius * FarPlaneMaxBlur, ringDistance, adaptiveDistanceCompensation);
+			float weight = (sampleRadius >= 0) * ringWeight * sampleWeight;
 			weight *= CalculateFarPlaneCoCCompatibility(colorRadius, sampleRadius);
 			// Keep Sky Sharp now treats the raw depth classification as a gather
 			// boundary as well as a final compositing mask. Clear sky and the far-depth
@@ -1113,6 +1251,14 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			weight *= (1.0 + min(FarPlaneMaxBlur, 3.0f) * saturate(colorRadius - sampleRadius));
 			if (weight > 0) {
 				tap = SampleFarGatherColor(halfResolutionTap, gatherMip);
+				if (ExperimentalTransparencyEnabled != 0)
+				{
+					float tapTransparencyCandidate = smoothstep(0.05f, 0.50f, saturate(tap.a));
+					float outwardTransparencyTransport =
+						tapTransparencyCandidate * (1.0f - centerTransparencyCandidate);
+					weight *= 1.0f -
+						0.70f * transparencySuppressionRamp * outwardTransparencyTransport;
+				}
 				float apertureHighlightWeight = CalculateApertureHighlightWeight(tap.rgb, normalizedRingRadius, colorRadius);
 				if (apertureHighlightWeight > 0.0f)
 					apertureHighlightWeight *= GetSkyHighlightEligibility(fullResolutionTap);
@@ -1344,6 +1490,40 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 
 	float coc = abs(TexCoCInput[DTid].r);
 	color.rgb = lerp(originalColor.rgb, color.rgb, saturate(coc < length(SharedData::BufferDim.zw) ? 0 : 4 * coc));
+	if (ExperimentalTransparencyEnabled != 0)
+	{
+		float transparencyCandidate = GetDualDepthTransparencyCandidate(DTid);
+		float blurParticipation = saturate(4.0f * coc);
+		float confidenceDetailGain = lerp(0.90f, 1.55f, transparencyCandidate);
+		float detailBlend = transparencyCandidate * blurParticipation * confidenceDetailGain;
+		float3 fineDetail;
+		float3 mediumBand;
+		float fineContrast;
+		GetOriginalSceneBands(DTid, fineDetail, mediumBand, fineContrast);
+		color.rgb += fineDetail * detailBlend;
+
+		float effectiveFarBlurRadius =
+			(FarPlaneMaxBlur * 0.01f) * invBlurPixelSizeLength * max(TexCoCInput[DTid].r, 0.0f);
+		float mediumBlurRamp = smoothstep(8.0f, 24.0f, effectiveFarBlurRadius);
+		float alignedTransparencyCoverage;
+		float transparencyInterior = GetAlignedTransparencyInterior(uv, alignedTransparencyCoverage);
+		float smoothSurface = 1.0f - smoothstep(0.025f, 0.125f, fineContrast);
+		float mediumStrength =
+			0.35f * transparencyCandidate * transparencyInterior * mediumBlurRamp * smoothSurface;
+		float originalLuminance = dot(originalColor.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+		float mediumLimit = max(0.015f, 0.08f * max(originalLuminance, 0.25f));
+		float3 veilMediumBand = clamp(mediumBand, -mediumLimit.xxx, mediumLimit.xxx);
+		color.rgb = max(color.rgb + veilMediumBand * mediumStrength, 0.0f);
+
+		float thinTransparency = saturate(alignedTransparencyCoverage - transparencyInterior);
+		float structuredSurface = smoothstep(0.035f, 0.160f, fineContrast);
+		float thinBlurRamp = smoothstep(3.0f, 14.0f, effectiveFarBlurRadius);
+		float thinHairStrength =
+			0.65f * transparencyCandidate * thinTransparency * thinBlurRamp * structuredSurface;
+		float thinHairLimit = max(0.020f, 0.12f * max(originalLuminance, 0.25f));
+		float3 thinHairBand = clamp(mediumBand, -thinHairLimit.xxx, thinHairLimit.xxx);
+		color.rgb = max(color.rgb + thinHairBand * thinHairStrength, 0.0f);
+	}
 	// Final restoration prevents the full-resolution smoothing passes from
 	// softening a moon pixel whose CoC was deliberately set to zero.
 	float moonProtection = GetMoonFarDepthProtection(DTid);

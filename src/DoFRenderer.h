@@ -114,6 +114,11 @@ namespace CDoF
 			std::uint32_t a_renderWidth,
 			std::uint32_t a_renderHeight);
 		bool CompileShaders(ID3D11Device* a_device);
+		bool CompileShaderSet(
+			ID3D11Device* a_device,
+			const std::filesystem::path& a_path,
+			Shaders& a_shaders,
+			std::string_view a_name);
 		bool CreateTexture(ID3D11Device* a_device, Texture& a_texture, DXGI_FORMAT a_format, std::uint32_t a_width, std::uint32_t a_height);
 		bool CreateConstantBuffer(ID3D11Device* a_device, std::uint32_t a_size, ComPtr<ID3D11Buffer>& a_buffer);
 		bool UpdateConstantBuffer(ID3D11DeviceContext* a_context, ID3D11Buffer* a_buffer, const void* a_data, std::uint32_t a_size);
@@ -168,10 +173,14 @@ namespace CDoF
 		Settings dialogueLensSettings_{};
 		Resources resources_{};
 		Shaders shaders_{};
+		Shaders test6Shaders_{};
+		Shaders test8Shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
 		ID3D11Device* shaderDevice_{};
 		ID3D11Device* silhouetteShaderDevice_{};
 		bool shadersReady_{ false };
+		bool test6ShadersReady_{ false };
+		bool test8ShadersReady_{ false };
 		bool silhouetteShaderReady_{ false };
 		bool permanentlyDisabled_{ false };
 		bool silhouetteDisabled_{ false };

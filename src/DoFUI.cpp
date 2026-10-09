@@ -942,17 +942,14 @@ namespace
 		}
 	}
 
-	void RenderExperimentalTransparencyControls()
+	void RenderHairBlendingControls()
 	{
-		MenuFramework::SeparatorText(Localized(
-			"Experimental Transparency",
-			"透過越し背景ぼかし（実験）"));
 		bool changed = CheckboxWithHelp(
-			"Enable Transparency Processing",
-			"透過処理を有効にする",
+			"Blend Hair",
+			"髪を馴染ませる",
 			&experimentalTransparencySettings.enabled,
-			"Enables one of the optional personal transparency experiments. OFF uses the completed stable rendering path and does not apply either experiment.",
-			"個人用の透過試作処理を有効にします。OFFではどちらの試作処理も使わず、完成版の安定描画経路を使用します。");
+			"Blurs the scenery behind hair so its edges blend naturally into the background. Transparent materials such as veils may become slightly softer. OFF uses the completed stable rendering path.",
+			"髪の後ろをぼかして背景になじませます。ベールなどの透過素材は少しぼやけます。OFFでは完成版の安定描画を使用します。");
 
 		const auto modeButton = [&](std::uint32_t a_mode, const char* a_id,
 			const char* a_englishHelp, const char* a_japaneseHelp) {
@@ -962,8 +959,8 @@ namespace
 			const auto label = visible + "##" + a_id;
 			const auto pressed = MenuFramework::Button(label.c_str());
 			MenuFramework::ItemTooltip(Localized(
-				experimentalTransparencySettings.enabled ? a_englishHelp : "Enable transparency processing before selecting a mode.",
-				experimentalTransparencySettings.enabled ? a_japaneseHelp : "先に「透過処理を有効にする」をONにしてください。"));
+				experimentalTransparencySettings.enabled ? a_englishHelp : "Enable Blend Hair before selecting a mode.",
+				experimentalTransparencySettings.enabled ? a_japaneseHelp : "先に「髪を馴染ませる」をONにしてください。"));
 			if (pressed && experimentalTransparencySettings.enabled && !selected) {
 				experimentalTransparencySettings.mode = a_mode;
 				return true;
@@ -984,11 +981,11 @@ namespace
 			ApplyExperimentalTransparency();
 			SetStatus(
 				experimentalTransparencySettings.enabled ?
-					"Experimental transparency mode " + std::to_string(experimentalTransparencySettings.mode) + " enabled (not saved)." :
-					"Experimental transparency disabled; stable rendering restored (not saved).",
+					"Hair blending mode " + std::to_string(experimentalTransparencySettings.mode) + " enabled (not saved)." :
+					"Hair blending disabled; stable rendering restored (not saved).",
 				experimentalTransparencySettings.enabled ?
-					"透過処理モード" + std::to_string(experimentalTransparencySettings.mode) + "を有効にしました（INI未保存）。" :
-					"透過処理を無効にし、完成版の安定描画へ戻しました（INI未保存）。");
+					"髪を馴染ませるモード" + std::to_string(experimentalTransparencySettings.mode) + "を有効にしました（INI未保存）。" :
+					"「髪を馴染ませる」を無効にし、完成版の安定描画へ戻しました（INI未保存）。");
 		}
 	}
 
@@ -1295,13 +1292,6 @@ namespace
 				showAdvanced ? "詳細設定を隠す" : "詳細設定を表示"))) {
 			showAdvanced = !showAdvanced;
 		}
-		MenuFramework::SameLine();
-		changed |= CheckboxWithHelp(
-			"Keep Sky Sharp",
-			"空を鮮明に保つ",
-			&uiSettings.keepSkySharp,
-			"Excludes clear-depth sky pixels and far-depth moon pixels from DoF while preserving a soft boundary around geometry. Moon protection follows this same switch.",
-			"深度が未描画の空と遠端深度の月をDoFから除外し、地形との境界は滑らかに保ちます。月の保護もこのスイッチに連動します。");
 		if (showAdvanced) {
 			MenuFramework::SeparatorText(Localized("Bokeh and Quality", "画質・ボケの詳細"));
 			changed |= CheckboxWithHelp(
@@ -1369,7 +1359,6 @@ namespace
 					&uiSettings.disableInMenus,
 					"Skip DoF in the main menu, loading screens, and world/local maps.",
 					"タイトル・ロード・ワールドマップ・ローカルマップではDoFを停止します。");
-			RenderExperimentalTransparencyControls();
 		}
 		return changed;
 	}
@@ -1460,6 +1449,14 @@ namespace
 			"Turn this off for dialogue-only DoF. The master switch and Dialogue Focus must remain enabled.",
 			"OFFにすると会話中だけDoFを使用します。主スイッチと「会話中の被写体にピントを合わせる」はONのままにしてください。");
 		RenderLanguageControls();
+		changed |= CheckboxWithHelp(
+			"Keep Sky Sharp",
+			"空を鮮明に保つ",
+			&uiSettings.keepSkySharp,
+			"Excludes clear-depth sky pixels and far-depth moon pixels from DoF while preserving a soft boundary around geometry. Moon protection follows this same switch.",
+			"深度が未描画の空と遠端深度の月をDoFから除外し、地形との境界は滑らかに保ちます。月の保護もこのスイッチに連動します。");
+		MenuFramework::SameLine();
+		RenderHairBlendingControls();
 		return changed;
 	}
 

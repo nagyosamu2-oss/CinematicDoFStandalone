@@ -407,32 +407,66 @@ bool CDoF::DoFRenderer::UpdateConstantBuffer(
 
 bool CDoF::DoFRenderer::CompileShaders(ID3D11Device* a_device)
 {
-	const std::filesystem::path path = L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof.cs.hlsl";
+	const auto stableReady = CompileShaderSet(
+		a_device,
+		L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof.cs.hlsl",
+		shaders_,
+		"stable");
+	if (!stableReady) {
+		return false;
+	}
+
+	test6ShadersReady_ = CompileShaderSet(
+		a_device,
+		L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof_test6.cs.hlsl",
+		test6Shaders_,
+		"hair blending mode 1 (Test6)");
+	test8ShadersReady_ = CompileShaderSet(
+		a_device,
+		L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof_test8.cs.hlsl",
+		test8Shaders_,
+		"hair blending mode 2 (Test8)");
+	if (!test6ShadersReady_ || !test8ShadersReady_) {
+		spdlog::warn(
+			"One or more optional hair-blending shader sets could not be prepared; unavailable modes will fall back to stable rendering");
+	}
+	return true;
+}
+
+bool CDoF::DoFRenderer::CompileShaderSet(
+	ID3D11Device* a_device,
+	const std::filesystem::path& a_path,
+	Shaders& a_shaders,
+	std::string_view a_name)
+{
+	a_shaders = {};
 	const std::array entries{
-		std::pair{ std::addressof(shaders_.updateFocus), "CS_UpdateFocus" },
-		std::pair{ std::addressof(shaders_.calculateCoC), "CS_CalculateCoC" },
-		std::pair{ std::addressof(shaders_.cocTile1), "CS_CoCTile1" },
-		std::pair{ std::addressof(shaders_.cocTile2), "CS_CoCTile2" },
-		std::pair{ std::addressof(shaders_.cocTileNeighbor), "CS_CoCTileNeighbor" },
-		std::pair{ std::addressof(shaders_.cocGaussian1), "CS_CoCGaussian1" },
-		std::pair{ std::addressof(shaders_.cocGaussian2), "CS_CoCGaussian2" },
-		std::pair{ std::addressof(shaders_.blur), "CS_Blur" },
-		std::pair{ std::addressof(shaders_.reduceColor), "CS_ReduceColor" },
-		std::pair{ std::addressof(shaders_.farBlur), "CS_FarBlur" },
-		std::pair{ std::addressof(shaders_.nearBlur), "CS_NearBlur" },
-		std::pair{ std::addressof(shaders_.tentFilter), "CS_TentFilter" },
-		std::pair{ std::addressof(shaders_.combiner), "CS_Combiner" },
-		std::pair{ std::addressof(shaders_.postSmoothing1), "CS_PostSmoothing1" },
-		std::pair{ std::addressof(shaders_.postSmoothing2AndFocusing), "CS_PostSmoothing2AndFocusing" }
+		std::pair{ std::addressof(a_shaders.updateFocus), "CS_UpdateFocus" },
+		std::pair{ std::addressof(a_shaders.calculateCoC), "CS_CalculateCoC" },
+		std::pair{ std::addressof(a_shaders.cocTile1), "CS_CoCTile1" },
+		std::pair{ std::addressof(a_shaders.cocTile2), "CS_CoCTile2" },
+		std::pair{ std::addressof(a_shaders.cocTileNeighbor), "CS_CoCTileNeighbor" },
+		std::pair{ std::addressof(a_shaders.cocGaussian1), "CS_CoCGaussian1" },
+		std::pair{ std::addressof(a_shaders.cocGaussian2), "CS_CoCGaussian2" },
+		std::pair{ std::addressof(a_shaders.blur), "CS_Blur" },
+		std::pair{ std::addressof(a_shaders.reduceColor), "CS_ReduceColor" },
+		std::pair{ std::addressof(a_shaders.farBlur), "CS_FarBlur" },
+		std::pair{ std::addressof(a_shaders.nearBlur), "CS_NearBlur" },
+		std::pair{ std::addressof(a_shaders.tentFilter), "CS_TentFilter" },
+		std::pair{ std::addressof(a_shaders.combiner), "CS_Combiner" },
+		std::pair{ std::addressof(a_shaders.postSmoothing1), "CS_PostSmoothing1" },
+		std::pair{ std::addressof(a_shaders.postSmoothing2AndFocusing), "CS_PostSmoothing2AndFocusing" }
 	};
 
 	for (const auto& [destination, entry] : entries) {
-		*destination = CompileComputeShader(a_device, path, entry);
+		*destination = CompileComputeShader(a_device, a_path, entry);
 		if (!destination->Get()) {
+			a_shaders = {};
+			spdlog::error("Could not compile {} shader set", a_name);
 			return false;
 		}
 	}
-	spdlog::info("Compiled all 15 depth-of-field compute passes (near balanced-perimeter kernel v15)");
+	spdlog::info("Compiled all 15 depth-of-field compute passes for {}", a_name);
 	return true;
 }
 
@@ -457,7 +491,11 @@ bool CDoF::DoFRenderer::EnsureBaseResources(
 
 	if (shadersReady_ && shaderDevice_ != a_device) {
 		shaders_ = {};
+		test6Shaders_ = {};
+		test8Shaders_ = {};
 		shadersReady_ = false;
+		test6ShadersReady_ = false;
+		test8ShadersReady_ = false;
 		shaderDevice_ = nullptr;
 	}
 	if (silhouetteShaderDevice_ && silhouetteShaderDevice_ != a_device) {
@@ -1457,6 +1495,17 @@ void CDoF::DoFRenderer::Dispatch(
 	std::uint32_t a_renderLeft,
 	std::uint32_t a_renderTop)
 {
+	const auto requestedTransparencyMode = experimentalTransparencySettings_.enabled ?
+		std::clamp(experimentalTransparencySettings_.mode, 1U, 2U) : 0U;
+	const Shaders* activeShaders = std::addressof(shaders_);
+	std::uint32_t activeTransparencyMode{};
+	if (requestedTransparencyMode == 1U && test6ShadersReady_) {
+		activeShaders = std::addressof(test6Shaders_);
+		activeTransparencyMode = 1U;
+	} else if (requestedTransparencyMode == 2U && test8ShadersReady_) {
+		activeShaders = std::addressof(test8Shaders_);
+		activeTransparencyMode = 2U;
+	}
 	const auto effectiveNearFocusRangeMeters =
 		a_targetNearFocusMinimumMeters > 0.0F ?
 			std::max(a_settings.nearFocusRangeMeters, a_targetNearFocusMinimumMeters) :
@@ -1496,8 +1545,7 @@ void CDoF::DoFRenderer::Dispatch(
 		.keepSkySharp = a_settings.keepSkySharp ? 1U : 0U,
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
-		.experimentalTransparencyMode = experimentalTransparencySettings_.enabled ?
-			std::clamp(experimentalTransparencySettings_.mode, 1U, 2U) : 0U,
+		.experimentalTransparencyMode = activeTransparencyMode,
 		.padding5 = 0U
 	};
 	const SharedConstants sharedData{
@@ -1565,7 +1613,7 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[1] = resources_.previousFocus.srv.Get();
 	srvs[2] = a_depth;
 	uavs[1] = resources_.focus.uav.Get();
-	bindAndDispatch(shaders_.updateFocus.Get(), 1, 1);
+	bindAndDispatch(activeShaders->updateFocus.Get(), 1, 1);
 	resetViews();
 	a_context->CopyResource(resources_.previousFocus.resource.Get(), resources_.focus.resource.Get());
 	resources_.focusInitialized = true;
@@ -1579,31 +1627,31 @@ void CDoF::DoFRenderer::Dispatch(
 	// behavior across Community Shaders and display-quality configurations.
 	srvs[11] = a_skyMaskDepth;
 	uavs[2] = resources_.coc.uav.Get();
-	bindAndDispatch(shaders_.calculateCoC.Get(), fullWidth, fullHeight);
+	bindAndDispatch(activeShaders->calculateCoC.Get(), fullWidth, fullHeight);
 	resetViews();
 
 	// Tile and expand CoC.
 	srvs[3] = resources_.coc.srv.Get();
 	uavs[2] = resources_.cocTileTemporary.uav.Get();
-	bindAndDispatch(shaders_.cocTile1.Get(), fullWidth, fullHeight);
+	bindAndDispatch(activeShaders->cocTile1.Get(), fullWidth, fullHeight);
 	resetViews();
 	srvs[3] = resources_.cocTileTemporary.srv.Get();
 	uavs[2] = resources_.cocTileTemporary2.uav.Get();
-	bindAndDispatch(shaders_.cocTile2.Get(), fullWidth, fullHeight);
+	bindAndDispatch(activeShaders->cocTile2.Get(), fullWidth, fullHeight);
 	resetViews();
 	srvs[3] = resources_.cocTileTemporary2.srv.Get();
 	uavs[2] = resources_.cocTileNeighbor.uav.Get();
-	bindAndDispatch(shaders_.cocTileNeighbor.Get(), fullWidth, fullHeight);
+	bindAndDispatch(activeShaders->cocTileNeighbor.Get(), fullWidth, fullHeight);
 	resetViews();
 
 	// Half-resolution CoC Gaussian blur.
 	srvs[3] = resources_.cocTileNeighbor.srv.Get();
 	uavs[2] = resources_.cocBlur1.uav.Get();
-	bindAndDispatch(shaders_.cocGaussian1.Get(), halfWidth, halfHeight);
+	bindAndDispatch(activeShaders->cocGaussian1.Get(), halfWidth, halfHeight);
 	resetViews();
 	srvs[3] = resources_.cocBlur1.srv.Get();
 	uavs[2] = resources_.cocBlur2.uav.Get();
-	bindAndDispatch(shaders_.cocGaussian2.Get(), halfWidth, halfHeight);
+	bindAndDispatch(activeShaders->cocGaussian2.Get(), halfWidth, halfHeight);
 	resetViews();
 
 	// Pre-, far-, and near-plane blur. Aperture shaping is calculated directly
@@ -1617,22 +1665,22 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[2] = a_depth;
 	srvs[11] = a_skyMaskDepth;
 	uavs[0] = resources_.preBlurred.uav.Get();
-	bindAndDispatch(shaders_.blur.Get(), halfWidth, halfHeight);
+	bindAndDispatch(activeShaders->blur.Get(), halfWidth, halfHeight);
 	resetViews();
 	// Build a compact color pyramid only for the far-plane gather. Large blur
 	// kernels select a coarser source so each fixed gather tap represents a
 	// wider, contiguous footprint instead of leaving visible gaps.
 	srvs[0] = resources_.preBlurred.srv.Get();
 	uavs[0] = resources_.farGatherColor1.uav.Get();
-	bindAndDispatch(shaders_.reduceColor.Get(), quarterWidth, quarterHeight);
+	bindAndDispatch(activeShaders->reduceColor.Get(), quarterWidth, quarterHeight);
 	resetViews();
 	srvs[0] = resources_.farGatherColor1.srv.Get();
 	uavs[0] = resources_.farGatherColor2.uav.Get();
-	bindAndDispatch(shaders_.reduceColor.Get(), eighthWidth, eighthHeight);
+	bindAndDispatch(activeShaders->reduceColor.Get(), eighthWidth, eighthHeight);
 	resetViews();
 	srvs[0] = resources_.farGatherColor2.srv.Get();
 	uavs[0] = resources_.farGatherColor3.uav.Get();
-	bindAndDispatch(shaders_.reduceColor.Get(), sixteenthWidth, sixteenthHeight);
+	bindAndDispatch(activeShaders->reduceColor.Get(), sixteenthWidth, sixteenthHeight);
 	resetViews();
 	srvs[0] = resources_.preBlurred.srv.Get();
 	srvs[8] = resources_.farGatherColor1.srv.Get();
@@ -1647,7 +1695,7 @@ void CDoF::DoFRenderer::Dispatch(
 	// depth so the shader can reject clear-sky samples from highlight extraction.
 	srvs[11] = a_skyMaskDepth;
 	uavs[0] = resources_.farBlurred.uav.Get();
-	bindAndDispatch(shaders_.farBlur.Get(), halfWidth, halfHeight);
+	bindAndDispatch(activeShaders->farBlur.Get(), halfWidth, halfHeight);
 	resetViews();
 	srvs[0] = resources_.farBlurred.srv.Get();
 	srvs[3] = resources_.cocTileNeighbor.srv.Get();
@@ -1655,13 +1703,13 @@ void CDoF::DoFRenderer::Dispatch(
 	// Near highlights use the same sky classification as the far gather.
 	srvs[11] = a_skyMaskDepth;
 	uavs[0] = resources_.nearBlurred.uav.Get();
-	bindAndDispatch(shaders_.nearBlur.Get(), halfWidth, halfHeight);
+	bindAndDispatch(activeShaders->nearBlur.Get(), halfWidth, halfHeight);
 	resetViews();
 
 	// Tent filter and combine.
 	srvs[0] = resources_.farBlurred.srv.Get();
 	uavs[0] = resources_.blurredFiltered.uav.Get();
-	bindAndDispatch(shaders_.tentFilter.Get(), halfWidth, halfHeight);
+	bindAndDispatch(activeShaders->tentFilter.Get(), halfWidth, halfHeight);
 	resetViews();
 	srvs[0] = a_color;
 	// CS_Combiner re-evaluates the target/focus-range depth protections.  Bind
@@ -1675,14 +1723,14 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[6] = resources_.nearBlurred.srv.Get();
 	srvs[11] = a_skyMaskDepth;
 	uavs[0] = resources_.postSmooth.uav.Get();
-	bindAndDispatch(shaders_.combiner.Get(), fullWidth, fullHeight);
+	bindAndDispatch(activeShaders->combiner.Get(), fullWidth, fullHeight);
 	resetViews();
 
 	// Final smoothing and focusing.
 	srvs[0] = resources_.postSmooth.srv.Get();
 	srvs[3] = resources_.coc.srv.Get();
 	uavs[0] = resources_.postSmooth2.uav.Get();
-	bindAndDispatch(shaders_.postSmoothing1.Get(), fullWidth, fullHeight);
+	bindAndDispatch(activeShaders->postSmoothing1.Get(), fullWidth, fullHeight);
 	resetViews();
 	srvs[0] = resources_.postSmooth.srv.Get();
 	srvs[3] = resources_.coc.srv.Get();
@@ -1693,7 +1741,7 @@ void CDoF::DoFRenderer::Dispatch(
 	srvs[9] = resources_.preBlurred.srv.Get();
 	srvs[11] = a_skyMaskDepth;
 	uavs[0] = resources_.output.uav.Get();
-	bindAndDispatch(shaders_.postSmoothing2AndFocusing.Get(), fullWidth, fullHeight);
+	bindAndDispatch(activeShaders->postSmoothing2AndFocusing.Get(), fullWidth, fullHeight);
 	resetViews();
 
 	ID3D11Buffer* nullBuffer = nullptr;

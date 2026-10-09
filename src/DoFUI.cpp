@@ -970,8 +970,8 @@ namespace
 		changed |= modeButton(
 			1U,
 			"TransparencyMode1",
-			"Mode 1 uses the Test6 edge-only boundary treatment: broad transparent interiors keep stronger background blur while veil and hair edges retain limited detail.",
-			"モード1はTest6の境界限定処理です。広い透過面の後ろは強めにぼかしつつ、ベールや髪の外周に限定して質感を戻します。");
+			"Mode 1 is the soft treatment: it keeps the Test6 boundary blur but intentionally omits final fine-detail recovery, blending the background behind hair more strongly.",
+			"モード1は柔らか処理です。Test6の境界ぼかしを保ちつつ最終の細部復元を行わず、髪の後ろの背景をより強く馴染ませます。");
 		changed |= modeButton(
 			2U,
 			"TransparencyMode2",

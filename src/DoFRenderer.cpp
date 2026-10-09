@@ -420,7 +420,7 @@ bool CDoF::DoFRenderer::CompileShaders(ID3D11Device* a_device)
 		a_device,
 		L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof_test6.cs.hlsl",
 		test6Shaders_,
-		"hair blending mode 1 (Test6)");
+		"hair blending mode 1 (soft Test6 boundary)");
 	test8ShadersReady_ = CompileShaderSet(
 		a_device,
 		L"Data\\Shaders\\CinematicDoFStandalone\\DoF\\dof_test8.cs.hlsl",
@@ -1733,11 +1733,10 @@ void CDoF::DoFRenderer::Dispatch(
 	bindAndDispatch(activeShaders->postSmoothing1.Get(), fullWidth, fullHeight);
 	resetViews();
 	srvs[0] = resources_.postSmooth.srv.Get();
-	// Test6/Test8 derive their dual-depth transparency confidence from the
-	// previous focus value, the selected post-Z depth, and the current main
-	// depth.  The original experimental DLL bound t1/t2 again for this final
-	// restoration pass.  Keep the bindings available for the optional shader
-	// sets; the stable shader ignores them while the option is disabled.
+	// Mode 2 derives its final detail-recovery confidence from the previous focus,
+	// selected post-Z depth, and current main depth. Mode 1 deliberately omits
+	// that recovery in HLSL to reproduce the useful soft Test2 appearance without
+	// relying on unbound resources. The stable shader ignores these bindings.
 	srvs[1] = resources_.previousFocus.srv.Get();
 	srvs[2] = a_depth;
 	srvs[3] = resources_.coc.srv.Get();

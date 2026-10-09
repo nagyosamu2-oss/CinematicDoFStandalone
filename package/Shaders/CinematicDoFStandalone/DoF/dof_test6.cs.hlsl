@@ -1589,54 +1589,11 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	// smoothing still used abs(CoC), which could make bright foreground ground
 	// look coarse when focusing on a distant lock-on target.
 	color.rgb = lerp(originalColor.rgb, color.rgb, saturate(coc < length(SharedData::BufferDim.zw) ? 0 : 4 * coc));
-	// Dual-Depth Confidence Detail Test31: retain Test30's broad background blur,
-	// then recover only fine detail from late/transparent subject surfaces. Raise
-	// recovery above Test28's 0.90 only where the dual-depth evidence is strong;
-	// uncertain pixels keep the conservative gain. The source colour's low-frequency
-	// component remains excluded, so scenery through hair and veils is not restored.
-	float transparencyCandidate = GetDualDepthTransparencyCandidate(DTid);
-	float blurParticipation = saturate(4.0f * coc);
-	// Transparency Detail Emphasis Test1: increase only the high-confidence
-	// residual overlay. The complete pre-DoF source colour is still excluded.
-	float confidenceDetailGain = lerp(0.90f, 1.55f, transparencyCandidate);
-	float detailBlend = transparencyCandidate * blurParticipation * confidenceDetailGain;
-	float3 fineDetail;
-	float3 mediumBand;
-	float fineContrast;
-	GetOriginalSceneBands(DTid, fineDetail, mediumBand, fineContrast);
-	color.rgb += fineDetail * detailBlend;
-
-	// Medium-Band Transparency Recovery Test34: preserve a modest amount of the
-	// veil's broad, low-contrast shading only at a well-supported transparency
-	// interior. It engages with strong far blur, is suppressed on fine outlines,
-	// and is clamped so the sharp scenery already composited behind the veil cannot
-	// be restored wholesale.
-	float effectiveFarBlurRadius =
-		(FarPlaneMaxBlur * 0.01f) * invBlurPixelSizeLength * max(TexCoCInput[DTid].r, 0.0f);
-	float mediumBlurRamp = smoothstep(8.0f, 24.0f, effectiveFarBlurRadius);
-	float alignedTransparencyCoverage;
-	float transparencyInterior = GetAlignedTransparencyInterior(uv, alignedTransparencyCoverage);
-	float smoothSurface = 1.0f - smoothstep(0.025f, 0.125f, fineContrast);
-	float mediumStrength =
-		0.35f * transparencyCandidate * transparencyInterior * mediumBlurRamp * smoothSurface;
-	float originalLuminance = dot(originalColor.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-	float mediumLimit = max(0.015f, 0.08f * max(originalLuminance, 0.25f));
-	float3 veilMediumBand = clamp(mediumBand, -mediumLimit.xxx, mediumLimit.xxx);
-	color.rgb = max(color.rgb + veilMediumBand * mediumStrength, 0.0f);
-
-	// Thin-Hair Continuity Test35: Test34 intentionally handles only a broad,
-	// eroded transparency interior. Its complement identifies narrow or broken
-	// alpha features such as rear hair cards and lace. Restore only their existing
-	// medium-frequency colour residual; never copy the complete source colour, so
-	// sharp scenery already composited through the alpha remains excluded.
-	float thinTransparency = saturate(alignedTransparencyCoverage - transparencyInterior);
-	float structuredSurface = smoothstep(0.035f, 0.160f, fineContrast);
-	float thinBlurRamp = smoothstep(3.0f, 14.0f, effectiveFarBlurRadius);
-	float thinHairStrength =
-		0.65f * transparencyCandidate * thinTransparency * thinBlurRamp * structuredSurface;
-	float thinHairLimit = max(0.020f, 0.12f * max(originalLuminance, 0.25f));
-	float3 thinHairBand = clamp(mediumBand, -thinHairLimit.xxx, thinHairLimit.xxx);
-	color.rgb = max(color.rgb + thinHairBand * thinHairStrength, 0.0f);
+	// Soft Hair Blend mode: the earlier combined Test2 build accidentally omitted
+	// the final pass's dual-depth inputs. That suppressed every fine/medium detail
+	// recovery term and produced a useful, visibly softer background through hair.
+	// Reproduce that appearance deliberately here without reading unbound shader
+	// resources. Mode 2 retains the complete Test8 dual-depth detail restoration.
 	// Final restoration prevents the full-resolution smoothing passes from
 	// softening a moon pixel whose CoC was deliberately set to zero.
 	float moonProtection = GetMoonFarDepthProtection(DTid);

@@ -947,21 +947,48 @@ namespace
 		MenuFramework::SeparatorText(Localized(
 			"Experimental Transparency",
 			"透過越し背景ぼかし（実験）"));
-		const auto changed = CheckboxWithHelp(
-			"Enable Test6 Transparency Path",
-			"Test6透過処理を有効にする",
+		bool changed = CheckboxWithHelp(
+			"Enable Transparency Processing",
+			"透過処理を有効にする",
 			&experimentalTransparencySettings.enabled,
-			"Optional personal Test6 research mode. It uses the difference between two depth sources to identify focused transparent hair or veils, keeps stronger compensation at their outer edges, blurs scenery behind broad transparent interiors, and restores only limited subject detail. Detection is heuristic, so extremely thin materials may be treated entirely as edges. OFF uses the completed stable rendering path.",
-			"個人用のTest6試作処理です。2種類の深度差からピント付近の髪・ベール等を推定し、強い補正を外周へ限定して、広い透過面の後ろはぼかしつつ透過物の限定的な質感だけを戻します。材質フラグではなく推定のため、非常に細い素材は全体が境界扱いになる場合があります。OFFでは完成版の安定描画経路を使用します。");
+			"Enables one of the optional personal transparency experiments. OFF uses the completed stable rendering path and does not apply either experiment.",
+			"個人用の透過試作処理を有効にします。OFFではどちらの試作処理も使わず、完成版の安定描画経路を使用します。");
+
+		const auto modeButton = [&](std::uint32_t a_mode, const char* a_id,
+			const char* a_englishHelp, const char* a_japaneseHelp) {
+			MenuFramework::SameLine();
+			const auto selected = experimentalTransparencySettings.mode == a_mode;
+			const auto visible = std::string(selected ? "*" : "") + std::to_string(a_mode);
+			const auto label = visible + "##" + a_id;
+			const auto pressed = MenuFramework::Button(label.c_str());
+			MenuFramework::ItemTooltip(Localized(
+				experimentalTransparencySettings.enabled ? a_englishHelp : "Enable transparency processing before selecting a mode.",
+				experimentalTransparencySettings.enabled ? a_japaneseHelp : "先に「透過処理を有効にする」をONにしてください。"));
+			if (pressed && experimentalTransparencySettings.enabled && !selected) {
+				experimentalTransparencySettings.mode = a_mode;
+				return true;
+			}
+			return false;
+		};
+		changed |= modeButton(
+			1U,
+			"TransparencyMode1",
+			"Mode 1 uses the Test6 edge-only boundary treatment: broad transparent interiors keep stronger background blur while veil and hair edges retain limited detail.",
+			"モード1はTest6の境界限定処理です。広い透過面の後ろは強めにぼかしつつ、ベールや髪の外周に限定して質感を戻します。");
+		changed |= modeButton(
+			2U,
+			"TransparencyMode2",
+			"Mode 2 uses the Test8 hybrid treatment: it adds restrained interior recovery and the Test7-style uniform sky/foliage transition during strong blur.",
+			"モード2はTest8のハイブリッド処理です。透過面の内側も控えめに復元し、強いぼかし時はTest7方式の空・枝葉の均一遷移を加えます。");
 		if (changed) {
 			ApplyExperimentalTransparency();
 			SetStatus(
 				experimentalTransparencySettings.enabled ?
-					"Experimental Test6 transparency path enabled (not saved)." :
-					"Experimental Test6 transparency path disabled; stable rendering restored (not saved).",
+					"Experimental transparency mode " + std::to_string(experimentalTransparencySettings.mode) + " enabled (not saved)." :
+					"Experimental transparency disabled; stable rendering restored (not saved).",
 				experimentalTransparencySettings.enabled ?
-					"Test6透過処理を有効にしました（INI未保存）。" :
-					"Test6透過処理を無効にし、完成版の安定描画へ戻しました（INI未保存）。");
+					"透過処理モード" + std::to_string(experimentalTransparencySettings.mode) + "を有効にしました（INI未保存）。" :
+					"透過処理を無効にし、完成版の安定描画へ戻しました（INI未保存）。");
 		}
 	}
 
@@ -1342,6 +1369,7 @@ namespace
 					&uiSettings.disableInMenus,
 					"Skip DoF in the main menu, loading screens, and world/local maps.",
 					"タイトル・ロード・ワールドマップ・ローカルマップではDoFを停止します。");
+			RenderExperimentalTransparencyControls();
 		}
 		return changed;
 	}
@@ -1524,7 +1552,6 @@ namespace
 		}
 		RenderTDMLockFocusControls();
 		RenderSneakFocusControls();
-		RenderExperimentalTransparencyControls();
 		RenderDialogueFocusControls();
 		MenuFramework::SeparatorText(Localized("Preset Management", "プリセット管理"));
 		RenderActions();

@@ -86,9 +86,10 @@ namespace CDoF
 
 	struct ExperimentalTransparencySettings
 	{
-		// Optional Test6 research path. Keep disabled so the completed 1.0.3
-		// rendering path remains the default.
+		// Optional personal research paths. Keep disabled so the completed 1.0.3
+		// rendering path remains the default. Mode 1 is Test6; mode 2 is Test8.
 		bool enabled{ false };
+		std::uint32_t mode{ 1U };
 	};
 
 	struct InterfaceSettings

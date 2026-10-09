@@ -165,7 +165,7 @@ cbuffer DoFCB : register(b1)
 	float HeadGuardRadius;
 	uint KeepSkySharp;
 	float2 TargetGuardAxis;
-	uint ExperimentalTransparencyEnabled;
+	uint ExperimentalTransparencyMode;
 	uint pad5;
 };
 
@@ -270,7 +270,7 @@ float GetDepth(float2 uv)
 
 float GetDualDepthTransparencyCandidate(uint2 renderPixel)
 {
-	if (ExperimentalTransparencyEnabled == 0)
+	if (ExperimentalTransparencyMode == 0)
 		return 0.0f;
 
 	// Test6's conservative signal: main depth contains a nearer surface while the
@@ -435,16 +435,73 @@ float GetSkyHighlightEligibility(float2 renderUV)
 	return 1.0f - skyOrMoon;
 }
 
+float GetDeepSkyBlurBlendFromRadius(float blurRadiusInPixels)
+{
+	// Only mode 2 reproduces Test8's frame-uniform transition during strong far
+	// blur. OFF and mode 1 keep the completed exact-sky path unchanged.
+	return ExperimentalTransparencyMode == 2 ?
+		smoothstep(6.0f, 16.0f, max(blurRadiusInPixels, 0.0f)) : 0.0f;
+}
+
+float GetDeepSkyBlurBlend()
+{
+	if (ExperimentalTransparencyMode != 2)
+		return 0.0f;
+	float farBlurRadiusInPixels = (max(FarPlaneMaxBlur, 0.0f) * 0.01f) * invBlurPixelSizeLength;
+	return GetDeepSkyBlurBlendFromRadius(farBlurRadiusInPixels);
+}
+
+float GetSkyGatherEligibility(float2 renderUV, float deepBlurBlend)
+{
+	float eligibility = 1.0f;
+	if (ExperimentalTransparencyMode != 2) {
+		eligibility = GetSkyHighlightEligibility(renderUV);
+	} else if (KeepSkySharp != 0) {
+		float2 clampedUV = ClampFullResolutionUV(renderUV);
+		uint2 renderPixel = ClampFullResolutionPixel(int2(clampedUV * SharedData::BufferDim.xy));
+		float rawDepth = SkyMaskDepthTexture[GetInputPixel(renderPixel)];
+		float clearGap = 1.0f - rawDepth;
+		float skyMask = rawDepth >= 1.0f ? 1.0f : 0.0f;
+		float moonMask = clearGap > 0.0f && clearGap < 1e-6f ? 1.0f : 0.0f;
+		eligibility = (1.0f - moonMask) *
+			(1.0f - skyMask * (1.0f - saturate(deepBlurBlend)));
+	}
+	return eligibility;
+}
+
+float GetSkyRingSafety(uint2 renderPixel, int radius)
+{
+	int2 pixel = int2(renderPixel);
+	float clearCount = 0.0f;
+	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(radius, 0)));
+	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(-radius, 0)));
+	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(0, radius)));
+	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(0, -radius)));
+	return smoothstep(0.75f, 1.0f, clearCount * 0.25f);
+}
+
 float GetSkyInteriorProtection(uint2 renderPixel)
 {
 	if (KeepSkySharp == 0)
 		return 0.0f;
 
-	// Preserve the exact full-resolution clear-depth classification. A broad
-	// unprotected band around geometry expands with the blur radius and becomes a
-	// visible halo around moons, mountains, trees, and buildings; boundary softness
-	// is therefore handled later by the local coverage composite instead.
-	return GetSkyClearDepthMask(renderPixel);
+	float centre = GetSkyClearDepthMask(renderPixel);
+	if (centre < 0.5f || ExperimentalTransparencyMode != 2)
+		return centre;
+
+	float resolutionScale = max(SharedData::BufferDim.y / 1440.0f, 0.5f);
+	float farBlurRadiusInPixels = (max(FarPlaneMaxBlur, 0.0f) * 0.01f) * invBlurPixelSizeLength;
+	int nearRadius = max(1, (int)round(resolutionScale));
+	int farRadius = max(
+		nearRadius + 2,
+		(int)round(clamp(farBlurRadiusInPixels * 0.20f, 4.0f * resolutionScale, 12.0f * resolutionScale)));
+	int middleRadius = max(nearRadius + 1, (int)round(lerp((float)nearRadius, (float)farRadius, 0.45f)));
+
+	float nearSafety = GetSkyRingSafety(renderPixel, nearRadius);
+	float middleSafety = GetSkyRingSafety(renderPixel, middleRadius);
+	float farSafety = GetSkyRingSafety(renderPixel, farRadius);
+	float legacyProtection = centre * (0.25f * nearSafety + 0.35f * middleSafety + 0.40f * farSafety);
+	return lerp(centre, legacyProtection, GetDeepSkyBlurBlend());
 }
 
 float GetLocalSkyCoverage(uint2 renderPixel)
@@ -1010,7 +1067,7 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	blurInfo.cocFactorPerPixel = blurPixelSizeLength * blurInfo.farPlaneMaxBlurInPixels;  // not needed for near plane.
 	// Pre Blur
 	float4 color = PerformPreDiscBlur(blurInfo, TexColor);
-	if (ExperimentalTransparencyEnabled != 0)
+	if (ExperimentalTransparencyMode != 0)
 	{
 		int2 basePixel = int2(2 * DTid);
 		float transparencyCandidate = 0.0f;
@@ -1037,7 +1094,7 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 	int2 basePixel = int2(DTid) * 2;
 	int2 sourceMaximum = int2(sourceWidth, sourceHeight) - 1;
-	if (ExperimentalTransparencyEnabled == 0)
+	if (ExperimentalTransparencyMode == 0)
 	{
 		float4 color = 0.0f;
 		[unroll] for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
@@ -1063,11 +1120,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 float GetFarGatherMip(float kernelRadiusInPixels, float ringCount)
 {
-	// Coarse color levels can already contain bright sky mixed into distant
-	// geometry before per-tap depth rejection runs. While sky protection is active,
-	// keep the gather on the half-resolution source so sky color cannot enter the
-	// protected geometry through an earlier reduction stage.
-	if (KeepSkySharp != 0)
+	// Preserve the completed renderer's early protected result for OFF and mode 1.
+	if (KeepSkySharp != 0 && ExperimentalTransparencyMode != 2)
 		return 0.0f;
 
 	// Mip 0 is already half resolution. Match each tap to the average radial
@@ -1076,7 +1130,17 @@ float GetFarGatherMip(float kernelRadiusInPixels, float ringCount)
 	// aperture-edge detail.
 	float halfResolutionRadius = kernelRadiusInPixels * 0.5f;
 	float sampleSpacing = halfResolutionRadius / max(ringCount + 0.5f, 1.0f);
-	return clamp(floor(log2(max(sampleSpacing, 1.0f))), 0.0f, 3.0f);
+	float gatherMip = clamp(floor(log2(max(sampleSpacing, 1.0f))), 0.0f, 3.0f);
+	if (KeepSkySharp != 0)
+	{
+		// The completed path and mode 1 stay on the protected half-resolution
+		// source. Mode 2 starts from Test8's delayed/capped protected choice and
+		// transitions toward its coarser 1.0.2-style choice at strong blur.
+		float protectedMip = ExperimentalTransparencyMode == 2 ?
+			clamp(gatherMip - 1.0f, 0.0f, 1.0f) : 0.0f;
+		gatherMip = lerp(protectedMip, gatherMip, GetDeepSkyBlurBlend());
+	}
+	return gatherMip;
 }
 
 float4 SampleFarGatherColor(float2 uv, float mip)
@@ -1136,10 +1200,11 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float2 currentRingRadiusCoords = ringRadiusDeltaCoords;
 	float cocPerRing = (colorRadius * FarPlaneMaxBlur) / blurInfo.numberOfRings;
 	float gatherMip = GetFarGatherMip(blurInfo.farPlaneMaxBlurInPixels * colorRadius, blurInfo.numberOfRings);
+	float deepSkyBlurBlend = GetDeepSkyBlurBlend();
 	float effectiveFarBlurRadius = blurInfo.farPlaneMaxBlurInPixels * colorRadius;
-	float transparencySuppressionRamp = ExperimentalTransparencyEnabled != 0 ?
+	float transparencySuppressionRamp = ExperimentalTransparencyMode != 0 ?
 		smoothstep(8.0f, 24.0f, effectiveFarBlurRadius) : 0.0f;
-	float centerTransparencyCandidate = ExperimentalTransparencyEnabled != 0 ? saturate(color.a) : 0.0f;
+	float centerTransparencyCandidate = ExperimentalTransparencyMode != 0 ? saturate(color.a) : 0.0f;
 	// Transparency Edge-Only Boundary Test6: broad transparent interiors already
 	// contain the scenery composited behind them. Applying the stronger boundary
 	// compensation across the whole candidate region sharpens that scenery along
@@ -1147,8 +1212,9 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	// neighbours and reserve the stronger compensation for candidate-side edges.
 	// Keep this work inside the optional branch so the completed OFF path remains
 	// byte-for-byte equivalent in its gather decisions.
+	float transparencyCandidateConfidence = 0.0f;
 	float transparencyBoundaryConfidence = 0.0f;
-	if (ExperimentalTransparencyEnabled != 0)
+	if (ExperimentalTransparencyMode != 0)
 	{
 		float minimumTransparencyNeighbour = centerTransparencyCandidate;
 		minimumTransparencyNeighbour = min(
@@ -1167,11 +1233,16 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			0.025f,
 			0.20f,
 			saturate(centerTransparencyCandidate - minimumTransparencyNeighbour));
-		transparencyBoundaryConfidence =
-			smoothstep(0.05f, 0.50f, centerTransparencyCandidate) * transparencyBoundaryBand;
+		transparencyCandidateConfidence = smoothstep(0.05f, 0.50f, centerTransparencyCandidate);
+		transparencyBoundaryConfidence = transparencyCandidateConfidence * transparencyBoundaryBand;
 	}
+	float transparencyInteriorCompensation = ExperimentalTransparencyMode == 2 ?
+		lerp(
+			NearFarDistanceCompensation,
+			max(NearFarDistanceCompensation, 3.25f),
+			transparencyCandidateConfidence) : NearFarDistanceCompensation;
 	float adaptiveDistanceCompensation = lerp(
-		NearFarDistanceCompensation,
+		transparencyInteriorCompensation,
 		max(NearFarDistanceCompensation, 5.0f),
 		transparencyBoundaryConfidence);
 	float ringDistance = 0;
@@ -1192,7 +1263,7 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			float sampleRadius = TexCoCInput.SampleLevel(LinearSampler, fullResolutionTap, 0).r;
 			float4 tap = 0;
 			float sampleWeight = CalculateSampleWeight(sampleRadius * FarPlaneMaxBlur, ringDistance);
-			if (ExperimentalTransparencyEnabled != 0)
+			if (ExperimentalTransparencyMode != 0)
 				sampleWeight = CalculateSampleWeightWithCompensation(
 					sampleRadius * FarPlaneMaxBlur, ringDistance, adaptiveDistanceCompensation);
 			float weight = (sampleRadius >= 0) * ringWeight * sampleWeight;
@@ -1200,13 +1271,13 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 			// boundary as well as a final compositing mask. Clear sky and the far-depth
 			// moon may remain sharp, but their colour must not be transported into a
 			// blurred geometry pixel outside that protected surface.
-			weight *= GetSkyHighlightEligibility(fullResolutionTap);
+			weight *= GetSkyGatherEligibility(fullResolutionTap, deepSkyBlurBlend);
 			// adjust the weight for samples which are in front of the fragment, as they have to get their weight boosted so we don't see edges bleeding through.
 			// as otherwise they'll get a weight that's too low relatively to the pixels sampled from the plane the fragment is in.The 3.0 value is empirically determined.
 			weight *= (1.0 + min(FarPlaneMaxBlur, 3.0f) * saturate(colorRadius - sampleRadius));
 			if (weight > 0) {
 				tap = SampleFarGatherColor(halfResolutionTap, gatherMip);
-				if (ExperimentalTransparencyEnabled != 0)
+				if (ExperimentalTransparencyMode != 0)
 				{
 					float tapTransparencyCandidate = smoothstep(0.05f, 0.50f, saturate(tap.a));
 					float outwardTransparencyTransport =
@@ -1401,7 +1472,9 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	if (KeepSkySharp != 0 && GetSkyClearDepthMask(DTid) > 0.5f)
 	{
 		float geometryCoverage = 1.0f - GetLocalSkyCoverage(DTid);
-		float boundaryBlend = geometryCoverage * saturate(FarPlaneMaxBlur);
+		// Mode 2's broad Test8 feather replaces this one-pixel repair at strong blur,
+		// so fade the repair out with the same frame-wide transition.
+		float boundaryBlend = geometryCoverage * saturate(FarPlaneMaxBlur) * (1.0f - GetDeepSkyBlurBlend());
 		color.rgb = lerp(color.rgb, farFragment.rgb, boundaryBlend);
 	}
 	// Restore the exact source texel for the moon. This is deliberately repeated
@@ -1434,7 +1507,7 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 
 	float coc = abs(TexCoCInput[DTid].r);
 	color.rgb = lerp(originalColor.rgb, color.rgb, saturate(coc < length(SharedData::BufferDim.zw) ? 0 : 4 * coc));
-	if (ExperimentalTransparencyEnabled != 0)
+	if (ExperimentalTransparencyMode != 0)
 	{
 		float transparencyCandidate = GetDualDepthTransparencyCandidate(DTid);
 		float blurParticipation = saturate(4.0f * coc);

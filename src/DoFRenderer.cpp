@@ -100,7 +100,7 @@ namespace
 		float headGuardRadius;
 		std::uint32_t keepSkySharp;
 		Float2 targetGuardAxis;
-		std::uint32_t experimentalTransparencyEnabled;
+		std::uint32_t experimentalTransparencyMode;
 		std::uint32_t padding5;
 	};
 	static_assert(sizeof(DoFConstants) == 144);
@@ -1241,7 +1241,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		D3D11_TEXTURE2D_DESC inputDescription{};
 		mainTarget.texture->GetDesc(&inputDescription);
 		const auto renderArea = GetActiveRenderArea(context, inputDescription);
-		// Test6 is a dual-depth experiment: the post-Z-prepass copy supplies the
+		// The optional transparency modes are dual-depth experiments: the post-Z-prepass copy supplies the
 		// farther background depth used by the ordinary DoF path, while the current
 		// main depth supplies the nearer transparent-subject surface used by the
 		// protection mask. Passing mainDepth for both inputs makes their difference
@@ -1256,12 +1256,13 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				if (!loggedExperimentalTransparencyDepth_) {
 					loggedExperimentalTransparencyDepth_ = true;
 					spdlog::info(
-						"Experimental Test6 transparency enabled with post-Z-prepass depth plus current main-depth protection");
+						"Experimental transparency mode {} enabled with post-Z-prepass depth plus current main-depth protection",
+						experimentalTransparencySettings_.mode);
 				}
 			} else if (!loggedExperimentalTransparencyDepthUnavailable_) {
 				loggedExperimentalTransparencyDepthUnavailable_ = true;
 				spdlog::warn(
-					"Experimental Test6 transparency requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
+					"Experimental transparency requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
 			}
 		}
 		if (!depthPathChecked_) {
@@ -1495,7 +1496,8 @@ void CDoF::DoFRenderer::Dispatch(
 		.keepSkySharp = a_settings.keepSkySharp ? 1U : 0U,
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
-		.experimentalTransparencyEnabled = experimentalTransparencySettings_.enabled ? 1U : 0U,
+		.experimentalTransparencyMode = experimentalTransparencySettings_.enabled ?
+			std::clamp(experimentalTransparencySettings_.mode, 1U, 2U) : 0U,
 		.padding5 = 0U
 	};
 	const SharedConstants sharedData{

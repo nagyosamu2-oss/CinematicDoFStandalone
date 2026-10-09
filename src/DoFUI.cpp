@@ -1552,7 +1552,7 @@ namespace
 		RenderDialogueFocusControls();
 		MenuFramework::SeparatorText(Localized("Preset Management", "プリセット管理"));
 		RenderActions();
-		MenuFramework::Text("Cinematic DoF Standalone 1.0.3");
+		MenuFramework::Text("Cinematic DoF Standalone 1.0.4");
 		if (fontPushed) {
 			MenuFramework::PopFont();
 		}

@@ -2,70 +2,50 @@
 
 ## 日本語
 
-1.0.3では、HDR0／HDR1の透過素材、人物境界、空・月・枝葉の境界処理を安定化し、任意で使える「髪を馴染ませる」を追加しました。通常描画と2つの髪ブレンド方式は完全に分離され、OFFでは追加方式を実行しません。
+1.0.3では、HDR0／HDR1の透過素材対応を安定化し、「空を鮮明に保つ」の境界処理を刷新しました。診断用の表示や切り替えは含まず、既存INIとプリセットをそのまま利用できます。
 
 ### 主な変更点
 
-- HDR0の手前ぼけ中間テクスチャで被覆率を保持し、人物周囲の黒い太線や点線状の膜を防止。
-- ピント境界のCoC互換性と空レイヤー判定を保ちながら、人物・髪・腕などの輪郭を自然に復元。
-- 「空を鮮明に保つ」で、空色の漏れを抑えつつ月、山、建造物、樹木、細い枝葉の境界を安定化。
-- 「髪を馴染ませる」をメイン画面へ追加。髪の後ろの背景をぼかし、切り抜き感を抑えます。
-  - モード1：背景を強く柔らかく馴染ませます。最も滑らかですが、ベールなどの透過素材も柔らかくなります。
-  - モード2：透過・形・内側の細部をより保ちながら馴染ませます。強いぼかし時の空・枝葉・月境界も保護します。
-- 追加方式のシェーダー準備に失敗した場合は、通常描画へ自動的にフォールバックします。
-- 既存INIとプリセットは互換です。髪の馴染ませは初期状態でOFFです。
+- DoFの距離判定をフル解像度のメイン深度へ統一し、Community Shadersの有無やSAO・SSR・64-bit HDR設定にかかわらず、透過衣装・ベール・透過アクセサリを同じ経路で扱います。
+- HDR0の`R11G11B10_FLOAT`にはアルファがないため、手前ぼけ中間テクスチャだけを`R16G16B16A16_FLOAT`へ切り替え、被覆率を正しく保持します。人物周囲の黒い太線・点線状の膜を防ぎます。
+- ピント境界をまたぐ色サンプルをCoC互換性で制限し、有効な手前ぼけ色がない画素は空のレイヤーとして扱います。
+- 「空を鮮明に保つ」では、未描画の空と遠端深度の月を保護しながら、空色が粗い遠景色階層から山・建造物・樹木へ混入する経路を遮断します。
+- 空と実ジオメトリが接する境界では、周囲3x3の深度から局所被覆率を求めます。空の内部と月は鮮明なまま、空を背景にした枝葉だけが不自然に鮮明になる差を和らげます。
+- 広い保護帯や診断用マスクは使用せず、ぼけ半径に応じて月・山・建造物の周囲が発光状に拡張する現象を防ぎます。
 
 ### 実ゲームで確認済み
 
-- HDR0／HDR1の人物、武器、透過衣装、ベール、透過アクセサリ
-- 通常描画、髪ブレンドのモード1／2、ON／OFF切り替え
-- 空、大小の月、山、建造物、樹木、細い枝葉
-- 強い遠景ぼけと「空を鮮明に保つ」の併用
-- 画面位置AF、対象追従、TDMロックオン、スニークモード、会話フォーカス
-- シルエット撮影、絞り形状ボケ、9プリセット
+- メイン環境と最小HDR0環境の両方
+- HDR0／HDR1の透過衣装、ベール、透過アクセサリ
+- 空、月、山、建造物、樹木、細い枝葉の境界
+- 強い遠景ぼけと「空を鮮明に保つ」の組み合わせ
+- Community Shadersあり／なしのメイン深度経路
 
-### インストール
+### 既知の制限
 
-- 新規導入：`CinematicDoFStandalone-1.0.3-Full-MO2.zip`
-- 更新：`CinematicDoFStandalone-1.0.3-Update-Merge-MO2.zip`
-
-更新版にはINIを含めません。MO2では既存MODへ`Merge`してください。`Replace`すると既存INIが削除されます。
-
-### 補足
-
-「髪を馴染ませる」は、半透明素材の背後を別深度として完全に再構築する機能ではありません。画面上の深度と透過信号を使って境界と背景の見え方を調整するため、素材や構図により効果量は変わります。
+半透明素材の背後に見える背景色と手前素材は、最終フレームでは同じ画素へ合成されています。1.0.3は透過素材そのものと通常のDoF境界を安定化しますが、透過素材越しの背景だけを別の深度でぼかす処理は含みません。
 
 ## English
 
-Version 1.0.3 stabilizes transparent materials, subject edges, and sky/moon/foliage boundaries under HDR0 and HDR1, and adds the optional `Blend Hair` feature. Standard rendering and the two hair-blending modes are fully separated; when disabled, the additional paths do not execute.
+Version 1.0.3 stabilizes transparent-material handling under HDR0 and HDR1 and revises `Keep Sky Sharp` boundary composition. It contains no diagnostic displays or experimental toggles, and existing INIs and presets remain compatible.
 
 ### Highlights
 
-- Preserves near-blur coverage under HDR0, preventing thick black or dotted membranes around subjects.
-- Restores natural subject, hair, arm, and hand boundaries while retaining CoC compatibility and empty-layer handling.
-- Revises `Keep Sky Sharp` to prevent sky-color leakage and stabilize moon, mountain, building, tree, and fine-foliage boundaries.
-- Adds `Blend Hair` to the main UI. It blurs scenery behind hair to reduce cut-out-looking edges.
-  - Mode 1: stronger, softer blending. It gives the smoothest transition, but transparent materials such as veils also become softer.
-  - Mode 2: preserves more transparency, shape, and interior detail while protecting sky, foliage, and moon boundaries during strong blur.
-- If an optional shader set cannot be prepared, that mode automatically falls back to standard rendering.
-- Existing INIs and presets remain compatible. Hair blending is disabled by default.
+- DoF distance classification consistently uses the full-resolution main depth, handling transparent outfits, veils, and accessories through the same path with or without Community Shaders and regardless of SAO, SSR, or 64-bit HDR settings.
+- Because HDR0's `R11G11B10_FLOAT` has no alpha channel, the near-blur intermediate alone uses `R16G16B16A16_FLOAT` so coverage survives correctly. This prevents thick black or dotted membranes around subjects.
+- CoC compatibility limits color sampling across focus boundaries, and a near-blur pixel without valid color samples is treated as an empty layer.
+- `Keep Sky Sharp` protects unwritten sky and far-depth moons while preventing bright sky already mixed into coarse far-color levels from contaminating mountains, buildings, and foliage.
+- At sky/geometry boundaries, local coverage is estimated from a 3x3 depth neighborhood. Interior sky and moons remain sharp while thin foliage no longer stays unnaturally sharp only against the sky.
+- No broad protection band or diagnostic mask is retained, avoiding blur-radius-sized glow around moons, mountains, and buildings.
 
 ### Validated in game
 
-- Actors, weapons, transparent outfits, veils, and accessories under HDR0 and HDR1
-- Standard rendering, both hair-blending modes, and live ON/OFF switching
-- Sky, both moons, mountains, buildings, trees, and fine foliage
+- Main setup and minimal HDR0 setup
+- Transparent outfits, veils, and accessories under HDR0 and HDR1
+- Sky, moon, mountain, building, tree, and thin-foliage boundaries
 - Strong far blur together with `Keep Sky Sharp`
-- Screen AF, target tracking, TDM lock-on, Sneak Mode, and dialogue focus
-- Silhouette Photo Mode, aperture-shaped bokeh, and all nine presets
+- Main-depth operation with and without Community Shaders
 
-### Installation
+### Known limitation
 
-- New installation: `CinematicDoFStandalone-1.0.3-Full-MO2.zip`
-- Update: `CinematicDoFStandalone-1.0.3-Update-Merge-MO2.zip`
-
-The update package intentionally contains no INI. In MO2, choose `Merge` into the existing mod. Do not choose `Replace`, because that removes the existing INI.
-
-### Note
-
-`Blend Hair` does not reconstruct the scenery behind every transparent pixel as a fully separate depth layer. It adjusts boundaries and background appearance from the available depth and transparency signals, so the visible strength depends on the material and composition.
+A transparent foreground and the background visible through it are already combined into one final-frame pixel. Version 1.0.3 stabilizes the transparent material and ordinary DoF boundaries, but does not yet blur only the background behind transparency at a separate depth.

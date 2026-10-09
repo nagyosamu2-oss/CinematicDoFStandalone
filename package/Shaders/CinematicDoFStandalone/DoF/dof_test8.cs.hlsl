@@ -420,6 +420,14 @@ float GetMoonFarDepthProtection(uint2 renderPixel)
 	return rawDepth < 1.0f && clearGap > 0.0f && clearGap < 1e-6f ? 1.0f : 0.0f;
 }
 
+float GetProtectedSkyOrMoonMask(uint2 renderPixel)
+{
+	// Mode 2 restores moon texels exactly, so treat them as part of the protected
+	// sharp background during the surrounding sky-boundary test as well. Treating
+	// the restored moon as ordinary geometry leaves a fixed-width blurred ring.
+	return max(GetSkyClearDepthMask(renderPixel), GetMoonFarDepthProtection(renderPixel));
+}
+
 [numthreads(8, 8, 1)] void CS_Silhouette(uint2 DTid : SV_DispatchThreadID)
 {
 	if (IsOutsideFullResolution(DTid))
@@ -490,10 +498,10 @@ float GetSkyRingSafety(uint2 renderPixel, int radius)
 {
 	int2 pixel = int2(renderPixel);
 	float clearCount = 0.0f;
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(radius, 0)));
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(-radius, 0)));
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(0, radius)));
-	clearCount += GetSkyClearDepthMask(ClampFullResolutionPixel(pixel + int2(0, -radius)));
+	clearCount += GetProtectedSkyOrMoonMask(ClampFullResolutionPixel(pixel + int2(radius, 0)));
+	clearCount += GetProtectedSkyOrMoonMask(ClampFullResolutionPixel(pixel + int2(-radius, 0)));
+	clearCount += GetProtectedSkyOrMoonMask(ClampFullResolutionPixel(pixel + int2(0, radius)));
+	clearCount += GetProtectedSkyOrMoonMask(ClampFullResolutionPixel(pixel + int2(0, -radius)));
 	return smoothstep(0.75f, 1.0f, clearCount * 0.25f);
 }
 

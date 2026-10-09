@@ -948,20 +948,20 @@ namespace
 			"Experimental Transparency",
 			"透過越し背景ぼかし（実験）"));
 		const auto changed = CheckboxWithHelp(
-			"Enable Test4 Transparency Path",
-			"Test4透過処理を有効にする",
+			"Enable Test6 Transparency Path",
+			"Test6透過処理を有効にする",
 			&experimentalTransparencySettings.enabled,
-			"Optional personal Test4 research mode. It uses the difference between two depth sources to identify focused transparent hair or veils, blur scenery behind them, and restore only limited subject detail. Detection is heuristic, so some materials may remain soft or may affect nearby background detail. OFF uses the completed stable rendering path.",
-			"個人用のTest4試作処理です。2種類の深度差からピント付近の髪・ベール等を推定し、その後ろをぼかしつつ透過物の限定的な質感だけを戻します。材質フラグではなく推定のため、素材によっては柔らかさが残る、または近くの背景へ影響する場合があります。OFFでは完成版の安定描画経路を使用します。");
+			"Optional personal Test6 research mode. It uses the difference between two depth sources to identify focused transparent hair or veils, keeps stronger compensation at their outer edges, blurs scenery behind broad transparent interiors, and restores only limited subject detail. Detection is heuristic, so extremely thin materials may be treated entirely as edges. OFF uses the completed stable rendering path.",
+			"個人用のTest6試作処理です。2種類の深度差からピント付近の髪・ベール等を推定し、強い補正を外周へ限定して、広い透過面の後ろはぼかしつつ透過物の限定的な質感だけを戻します。材質フラグではなく推定のため、非常に細い素材は全体が境界扱いになる場合があります。OFFでは完成版の安定描画経路を使用します。");
 		if (changed) {
 			ApplyExperimentalTransparency();
 			SetStatus(
 				experimentalTransparencySettings.enabled ?
-					"Experimental Test4 transparency path enabled (not saved)." :
-					"Experimental Test4 transparency path disabled; stable rendering restored (not saved).",
+					"Experimental Test6 transparency path enabled (not saved)." :
+					"Experimental Test6 transparency path disabled; stable rendering restored (not saved).",
 				experimentalTransparencySettings.enabled ?
-					"Test4透過処理を有効にしました（INI未保存）。" :
-					"Test4透過処理を無効にし、完成版の安定描画へ戻しました（INI未保存）。");
+					"Test6透過処理を有効にしました（INI未保存）。" :
+					"Test6透過処理を無効にし、完成版の安定描画へ戻しました（INI未保存）。");
 		}
 	}
 

@@ -416,7 +416,7 @@ CDoF::ExperimentalTransparencySettings CDoF::LoadExperimentalTransparencySetting
 {
 	ExperimentalTransparencySettings result{};
 	result.enabled = ReadBool(kExperimentalTransparencySection, L"Enabled", result.enabled);
-	spdlog::info("Experimental Test4 transparency path loaded: enabled={}", result.enabled);
+	spdlog::info("Experimental Test6 transparency path loaded: enabled={}", result.enabled);
 	return result;
 }
 
@@ -425,7 +425,7 @@ bool CDoF::SaveExperimentalTransparencySettings(const ExperimentalTransparencySe
 	const auto success = WriteBool(kExperimentalTransparencySection, L"Enabled", a_settings.enabled);
 	WritePrivateProfileStringW(nullptr, nullptr, nullptr, kPath);
 	if (success) {
-		spdlog::info("Experimental Test4 transparency path saved: enabled={}", a_settings.enabled);
+		spdlog::info("Experimental Test6 transparency path saved: enabled={}", a_settings.enabled);
 	}
 	return success;
 }

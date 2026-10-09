@@ -86,7 +86,7 @@ namespace CDoF
 
 	struct ExperimentalTransparencySettings
 	{
-		// Optional Test4 research path. Keep disabled so the completed 1.0.3
+		// Optional Test6 research path. Keep disabled so the completed 1.0.3
 		// rendering path remains the default.
 		bool enabled{ false };
 	};

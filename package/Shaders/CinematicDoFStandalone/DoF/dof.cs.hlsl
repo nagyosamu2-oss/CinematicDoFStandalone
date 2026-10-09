@@ -273,7 +273,7 @@ float GetDualDepthTransparencyCandidate(uint2 renderPixel)
 	if (ExperimentalTransparencyEnabled == 0)
 		return 0.0f;
 
-	// Test4's conservative signal: main depth contains a nearer surface while the
+	// Test6's conservative signal: main depth contains a nearer surface while the
 	// fallback depth sees farther scenery. Restrict it to the current focus
 	// neighbourhood so unrelated distant alpha-tested foliage is not restored.
 	uint2 inputPixel = GetInputPixel(renderPixel);
@@ -1140,7 +1140,36 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float transparencySuppressionRamp = ExperimentalTransparencyEnabled != 0 ?
 		smoothstep(8.0f, 24.0f, effectiveFarBlurRadius) : 0.0f;
 	float centerTransparencyCandidate = ExperimentalTransparencyEnabled != 0 ? saturate(color.a) : 0.0f;
-	float transparencyBoundaryConfidence = smoothstep(0.05f, 0.50f, centerTransparencyCandidate);
+	// Transparency Edge-Only Boundary Test6: broad transparent interiors already
+	// contain the scenery composited behind them. Applying the stronger boundary
+	// compensation across the whole candidate region sharpens that scenery along
+	// with the veil. Erode the half-resolution candidate mask with its four direct
+	// neighbours and reserve the stronger compensation for candidate-side edges.
+	// Keep this work inside the optional branch so the completed OFF path remains
+	// byte-for-byte equivalent in its gather decisions.
+	float transparencyBoundaryConfidence = 0.0f;
+	if (ExperimentalTransparencyEnabled != 0)
+	{
+		float minimumTransparencyNeighbour = centerTransparencyCandidate;
+		minimumTransparencyNeighbour = min(
+			minimumTransparencyNeighbour,
+			saturate(TexColor[ClampHalfResolutionPixel(int2(DTid) + int2(1, 0))].a));
+		minimumTransparencyNeighbour = min(
+			minimumTransparencyNeighbour,
+			saturate(TexColor[ClampHalfResolutionPixel(int2(DTid) + int2(-1, 0))].a));
+		minimumTransparencyNeighbour = min(
+			minimumTransparencyNeighbour,
+			saturate(TexColor[ClampHalfResolutionPixel(int2(DTid) + int2(0, 1))].a));
+		minimumTransparencyNeighbour = min(
+			minimumTransparencyNeighbour,
+			saturate(TexColor[ClampHalfResolutionPixel(int2(DTid) + int2(0, -1))].a));
+		float transparencyBoundaryBand = smoothstep(
+			0.025f,
+			0.20f,
+			saturate(centerTransparencyCandidate - minimumTransparencyNeighbour));
+		transparencyBoundaryConfidence =
+			smoothstep(0.05f, 0.50f, centerTransparencyCandidate) * transparencyBoundaryBand;
+	}
 	float adaptiveDistanceCompensation = lerp(
 		NearFarDistanceCompensation,
 		max(NearFarDistanceCompensation, 5.0f),

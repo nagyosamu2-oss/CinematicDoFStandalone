@@ -539,7 +539,7 @@ bool CDoF::DoFRenderer::EnsureResources(
 	const auto nearBlurColor = color == DXGI_FORMAT_R11G11B10_FLOAT ?
 		DXGI_FORMAT_R16G16B16A16_FLOAT :
 		color;
-	// The optional Test4 path carries a conservative transparency mask in alpha
+	// The optional Test6 path carries a conservative transparency mask in alpha
 	// through the far-gather pyramid. HDR0's R11G11B10 target has no alpha, so use
 	// the same alpha-capable intermediate already proven by the near-blur path.
 	// Keeping this allocation stable permits live ON/OFF switching without a
@@ -1241,7 +1241,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		D3D11_TEXTURE2D_DESC inputDescription{};
 		mainTarget.texture->GetDesc(&inputDescription);
 		const auto renderArea = GetActiveRenderArea(context, inputDescription);
-		// Test4 is a dual-depth experiment: the post-Z-prepass copy supplies the
+		// Test6 is a dual-depth experiment: the post-Z-prepass copy supplies the
 		// farther background depth used by the ordinary DoF path, while the current
 		// main depth supplies the nearer transparent-subject surface used by the
 		// protection mask. Passing mainDepth for both inputs makes their difference
@@ -1256,12 +1256,12 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				if (!loggedExperimentalTransparencyDepth_) {
 					loggedExperimentalTransparencyDepth_ = true;
 					spdlog::info(
-						"Experimental Test4 transparency enabled with post-Z-prepass depth plus current main-depth protection");
+						"Experimental Test6 transparency enabled with post-Z-prepass depth plus current main-depth protection");
 				}
 			} else if (!loggedExperimentalTransparencyDepthUnavailable_) {
 				loggedExperimentalTransparencyDepthUnavailable_ = true;
 				spdlog::warn(
-					"Experimental Test4 transparency requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
+					"Experimental Test6 transparency requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
 			}
 		}
 		if (!depthPathChecked_) {

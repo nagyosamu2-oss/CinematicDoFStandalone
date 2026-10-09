@@ -1733,6 +1733,13 @@ void CDoF::DoFRenderer::Dispatch(
 	bindAndDispatch(activeShaders->postSmoothing1.Get(), fullWidth, fullHeight);
 	resetViews();
 	srvs[0] = resources_.postSmooth.srv.Get();
+	// Test6/Test8 derive their dual-depth transparency confidence from the
+	// previous focus value, the selected post-Z depth, and the current main
+	// depth.  The original experimental DLL bound t1/t2 again for this final
+	// restoration pass.  Keep the bindings available for the optional shader
+	// sets; the stable shader ignores them while the option is disabled.
+	srvs[1] = resources_.previousFocus.srv.Get();
+	srvs[2] = a_depth;
 	srvs[3] = resources_.coc.srv.Get();
 	srvs[7] = resources_.postSmooth2.srv.Get();
 	// The experimental final pass reads the untouched scene for detail bands and

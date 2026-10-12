@@ -160,6 +160,7 @@ namespace CDoF
 			kTDMLock,
 			kSneak,
 			kPlayer,
+			kFirstPersonScreenAF,
 			kConsole
 		};
 
@@ -189,7 +190,6 @@ namespace CDoF
 		bool loggedSilhouetteDestinationFailure_{ false };
 		bool depthPathChecked_{ false };
 		bool useStandaloneNonActorTargetGuard_{ false };
-		bool useCommunityShadersActorNearFocusAssist_{ false };
 		bool useStandaloneNearFocusAssist_{ false };
 		bool loggedTargetGuard_{ false };
 		bool loggedTargetNearFocusAssist_{ false };

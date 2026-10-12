@@ -249,7 +249,6 @@ namespace
 	};
 
 	constexpr float kGameUnitToMeters = 0.01428F;
-	constexpr float kCommunityShadersActorNearFocusMinimumMeters = 0.17F;
 	constexpr float kStandaloneNearFocusMinimumMeters = 0.15F;
 
 	RE::NiCamera* FindActiveNiCamera(RE::NiAVObject* a_object)
@@ -1158,8 +1157,23 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 	if (!dialogueOnlyIdle &&
 		targetFocusMode == TargetFocusMode::kNone && targetFocusSettings_.consoleEnabled) {
 		const auto playerSource = targetFocusSettings_.targetSource == TargetFocusSource::kPlayer;
-		const auto focus = playerSource ? GetPlayerTargetFocus() : GetConsoleTargetFocus();
-		if (focus) {
+		const auto camera = RE::PlayerCamera::GetSingleton();
+		const auto useFirstPersonScreenAFFallback =
+			playerSource &&
+			camera && camera->IsInFirstPerson() &&
+			targetFocusSettings_.useFirstPersonScreenAFFallback;
+		if (useFirstPersonScreenAFFallback) {
+			// Treat the first-person fallback as a real renderer mode instead of
+			// patching the normal settings after target resolution. This keeps the
+			// live first-person X/Y controls connected to the constants uploaded to
+			// the autofocus shader while player tracking is intentionally paused.
+			effectiveSettings = settings_;
+			effectiveSettings.enabled = true;
+			effectiveSettings.autoFocus = true;
+			effectiveSettings.focusX = effectiveSettings.firstPersonFocusX;
+			effectiveSettings.focusY = effectiveSettings.firstPersonFocusY;
+			targetFocusMode = TargetFocusMode::kFirstPersonScreenAF;
+		} else if (const auto focus = playerSource ? GetPlayerTargetFocus() : GetConsoleTargetFocus()) {
 			effectiveSettings = settings_;
 			effectiveSettings.enabled = true;
 			// Match Screen AF: sample the same depth texture used by the CoC pass at
@@ -1179,7 +1193,15 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		}
 	}
 	if (targetFocusMode != targetFocusMode_) {
+		const auto previousTargetFocusMode = targetFocusMode_;
 		targetFocusMode_ = targetFocusMode;
+		// Entering or leaving the first-person fallback replaces a tracked target
+		// distance with a sampled screen position. Seed only that transition
+		// immediately; preserve the established smoothing between all other modes.
+		if (previousTargetFocusMode == TargetFocusMode::kFirstPersonScreenAF ||
+			targetFocusMode_ == TargetFocusMode::kFirstPersonScreenAF) {
+			resources_.focusInitialized = false;
+		}
 		switch (targetFocusMode_) {
 		case TargetFocusMode::kDialogue:
 			if (effectiveSettings.autoFocus) {
@@ -1223,6 +1245,13 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 					effectiveSettings.manualFocusMeters);
 			}
 			break;
+		case TargetFocusMode::kFirstPersonScreenAF:
+			spdlog::info(
+				"First-person Screen AF fallback activated at ({:.3f}, {:.3f}); offset {:+.2f} m",
+				effectiveSettings.focusX,
+				effectiveSettings.focusY,
+				effectiveSettings.autoFocusOffsetMeters);
+			break;
 		case TargetFocusMode::kConsole:
 			if (effectiveSettings.autoFocus) {
 				spdlog::info("Console target focus activated using visible-surface depth at ({:.3f}, {:.3f}); offset {:+.2f} m",
@@ -1237,9 +1266,17 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 			break;
 		}
 	}
-	if (const auto camera = RE::PlayerCamera::GetSingleton();
-		camera && camera->IsInFirstPerson() && !effectiveSettings.enableFirstPersonNearBlur) {
-		effectiveSettings.nearPlaneMaxBlur = 0.0F;
+	if (const auto camera = RE::PlayerCamera::GetSingleton(); camera && camera->IsInFirstPerson()) {
+		// Ordinary Screen AF keeps independent framing coordinates for first and
+		// third person. Target tracking's optional first-person fallback has
+		// already selected these coordinates as its own renderer mode above.
+		if (targetFocusMode == TargetFocusMode::kNone && effectiveSettings.autoFocus) {
+			effectiveSettings.focusX = effectiveSettings.firstPersonFocusX;
+			effectiveSettings.focusY = effectiveSettings.firstPersonFocusY;
+		}
+		if (!effectiveSettings.enableFirstPersonNearBlur) {
+			effectiveSettings.nearPlaneMaxBlur = 0.0F;
+		}
 	}
 	// Dialogue-only mode normally returns before touching the renderer. Force the
 	// existing menu guard during its one-time preparation so shader compilation
@@ -1321,15 +1358,11 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				standaloneHdrTargetGuardSetting;
 			useStandaloneNonActorTargetGuard_ =
 				!communityShadersLoaded && standaloneTargetGuardSetting;
-			// Visual A/B testing selected the assisted Test 7A result: when Community
-			// Shaders is present, tracked actors always receive the small near-focus
-			// floor.  This is independent of HDR and does not change saved settings.
-			useCommunityShadersActorNearFocusAssist_ = communityShadersLoaded;
 			useStandaloneNearFocusAssist_ =
 				!communityShadersLoaded && standaloneHdrTargetGuardSetting;
 			depthPathChecked_ = true;
 			spdlog::info(
-				"Display depth settings at first frame: SAO={}, SSR={}, 64-bit HDR={}; main target format={} (actual 64-bit HDR target={}); Community Shaders={}; selected main depth path; tracked-actor depth guard=unified; standalone non-actor guard={}; Community Shaders actor near-focus assist={}; standalone HDR-off near-focus assist={}",
+				"Display depth settings at first frame: SAO={}, SSR={}, 64-bit HDR={}; main target format={} (actual 64-bit HDR target={}); Community Shaders={}; selected main depth path; tracked-actor depth guard=unified; standalone non-actor guard={}; standalone HDR-off near-focus assist={}",
 				DescribeDisplayBool(runtimeSaoEnabled),
 				DescribeDisplayBool(runtimeReflectionsEnabled),
 				DescribeDisplayBool(runtimeHdr64Enabled),
@@ -1337,7 +1370,6 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				actualHdr64Target ? "yes" : "no",
 				communityShadersLoaded ? "loaded" : "not loaded",
 				useStandaloneNonActorTargetGuard_ ? "enabled" : "disabled",
-				useCommunityShadersActorNearFocusAssist_ ? "enabled" : "disabled",
 				useStandaloneNearFocusAssist_ ? "enabled" : "disabled");
 		}
 
@@ -1414,10 +1446,7 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 				validTargetFocus : nullptr;
 		float targetNearFocusMinimumMeters{};
 		const char* targetNearFocusAssistName = nullptr;
-		if (validTargetFocus && validTargetFocus->actor && useCommunityShadersActorNearFocusAssist_) {
-			targetNearFocusMinimumMeters = kCommunityShadersActorNearFocusMinimumMeters;
-			targetNearFocusAssistName = "Community Shaders actor";
-		} else if (validTargetFocus && useStandaloneNearFocusAssist_) {
+		if (validTargetFocus && useStandaloneNearFocusAssist_) {
 			targetNearFocusMinimumMeters = kStandaloneNearFocusMinimumMeters;
 			targetNearFocusAssistName = "Standalone HDR-off";
 		}

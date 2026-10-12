@@ -19,8 +19,12 @@ namespace CDoF
 		bool autoFocus{ false };
 		bool disableInMenus{ true };
 		float transitionSpeed{ 0.9F };
+		// Existing FocusX/FocusY remain the third-person coordinates for INI and
+		// preset compatibility. First person has its own center-screen defaults.
 		float focusX{ 0.5F };
 		float focusY{ 0.5F };
+		float firstPersonFocusX{ 0.5F };
+		float firstPersonFocusY{ 0.5F };
 		float autoFocusOffsetMeters{ 0.0F };
 		float manualFocusMeters{ 46.09F };
 		float focalLength{ 20.6F };
@@ -52,6 +56,7 @@ namespace CDoF
 		bool consoleEnabled{ false };
 		TargetFocusSource targetSource{ TargetFocusSource::kPlayer };
 		float targetFocusOffsetMeters{ 0.0F };
+		bool useFirstPersonScreenAFFallback{ false };
 	};
 
 	struct TDMFocusSettings

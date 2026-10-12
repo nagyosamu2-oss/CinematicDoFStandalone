@@ -34,6 +34,7 @@ namespace
 	MenuFramework::WindowInterface* focusPickerWindow{};
 	bool focusPickerActive{};
 	bool focusPickerAcceptInput{};
+	bool focusPickerFirstPerson{};
 	float focusPickerOriginalX{ 0.5F };
 	float focusPickerOriginalY{ 0.5F };
 	bool focusPickerOriginalAutoFocus{};
@@ -47,6 +48,30 @@ namespace
 	const char* Localized(const char* a_english, const char* a_japanese)
 	{
 		return interfaceSettings.japanese ? a_japanese : a_english;
+	}
+
+	bool IsFirstPersonView()
+	{
+		const auto camera = RE::PlayerCamera::GetSingleton();
+		return camera && camera->IsInFirstPerson();
+	}
+
+	bool IsFirstPersonScreenAFFallbackActive()
+	{
+		return IsFirstPersonView() &&
+			targetFocusSettings.consoleEnabled &&
+			targetFocusSettings.targetSource == TargetFocusSource::kPlayer &&
+			targetFocusSettings.useFirstPersonScreenAFFallback;
+	}
+
+	float& ScreenFocusX(Settings& a_settings, bool a_firstPerson)
+	{
+		return a_firstPerson ? a_settings.firstPersonFocusX : a_settings.focusX;
+	}
+
+	float& ScreenFocusY(Settings& a_settings, bool a_firstPerson)
+	{
+		return a_firstPerson ? a_settings.firstPersonFocusY : a_settings.focusY;
 	}
 
 	void SetStatus(std::string a_english, std::string a_japanese)
@@ -256,8 +281,8 @@ namespace
 	void FinishFocusPicker(bool a_confirmed, bool a_reopenMainWindow)
 	{
 		if (!a_confirmed) {
-			uiSettings.focusX = focusPickerOriginalX;
-			uiSettings.focusY = focusPickerOriginalY;
+			ScreenFocusX(uiSettings, focusPickerFirstPerson) = focusPickerOriginalX;
+			ScreenFocusY(uiSettings, focusPickerFirstPerson) = focusPickerOriginalY;
 			uiSettings.autoFocus = focusPickerOriginalAutoFocus;
 			targetFocusSettings.consoleEnabled = focusPickerOriginalConsoleEnabled;
 		}
@@ -291,8 +316,9 @@ namespace
 				"このMenu Frameworkでは画面位置AFの視覚選択を利用できません。");
 			return;
 		}
-		focusPickerOriginalX = uiSettings.focusX;
-		focusPickerOriginalY = uiSettings.focusY;
+		focusPickerFirstPerson = IsFirstPersonView();
+		focusPickerOriginalX = ScreenFocusX(uiSettings, focusPickerFirstPerson);
+		focusPickerOriginalY = ScreenFocusY(uiSettings, focusPickerFirstPerson);
 		focusPickerOriginalAutoFocus = uiSettings.autoFocus;
 		focusPickerOriginalConsoleEnabled = targetFocusSettings.consoleEnabled;
 		uiSettings.autoFocus = true;
@@ -618,6 +644,8 @@ namespace
 			NearlyEqual(a_left.transitionSpeed, a_right.transitionSpeed) &&
 			NearlyEqual(a_left.focusX, a_right.focusX) &&
 			NearlyEqual(a_left.focusY, a_right.focusY) &&
+			NearlyEqual(a_left.firstPersonFocusX, a_right.firstPersonFocusX) &&
+			NearlyEqual(a_left.firstPersonFocusY, a_right.firstPersonFocusY) &&
 			NearlyEqual(a_left.autoFocusOffsetMeters, a_right.autoFocusOffsetMeters) &&
 			NearlyEqual(a_left.manualFocusMeters, a_right.manualFocusMeters) &&
 			NearlyEqual(a_left.focalLength, a_right.focalLength) &&
@@ -644,7 +672,8 @@ namespace
 			NearlyEqual(a_left.dialogueDepthStrength, a_right.dialogueDepthStrength) &&
 			a_left.consoleEnabled == a_right.consoleEnabled &&
 			a_left.targetSource == a_right.targetSource &&
-			NearlyEqual(a_left.targetFocusOffsetMeters, a_right.targetFocusOffsetMeters);
+			NearlyEqual(a_left.targetFocusOffsetMeters, a_right.targetFocusOffsetMeters) &&
+			a_left.useFirstPersonScreenAFFallback == a_right.useFirstPersonScreenAFFallback;
 	}
 
 	std::optional<std::size_t> FindMatchingPreset()
@@ -1014,6 +1043,7 @@ namespace
 	bool RenderFocusModeControls()
 	{
 		bool changed{};
+		const auto firstPerson = IsFirstPersonView();
 		MenuFramework::SeparatorText(Localized("Focus Mode", "ピント方式"));
 		const auto manualSelected = !targetFocusSettings.consoleEnabled && !uiSettings.autoFocus;
 		const auto screenSelected = !targetFocusSettings.consoleEnabled && uiSettings.autoFocus;
@@ -1028,8 +1058,16 @@ namespace
 		}
 		MenuFramework::SameLine();
 		if (ChoiceButton(
-				"Screen AF", "画面位置AF", "ScreenFocusMode", screenSelected,
-				"Read depth from the selected X/Y screen position.", "画面上のX・Y位置から距離を読み取ります。") &&
+				firstPerson ? "1st-Person AF" : "3rd-Person AF",
+				firstPerson ? "一人称画面AF" : "三人称画面AF",
+				"ScreenFocusMode",
+				screenSelected,
+				firstPerson ?
+					"Read depth from the first-person X/Y screen position." :
+					"Read depth from the third-person X/Y screen position.",
+				firstPerson ?
+					"一人称用の画面X・Y位置から距離を読み取ります。" :
+					"三人称用の画面X・Y位置から距離を読み取ります。") &&
 			!screenSelected) {
 			targetFocusSettings.consoleEnabled = false;
 			uiSettings.autoFocus = true;
@@ -1082,8 +1120,12 @@ namespace
 			const auto camera = RE::PlayerCamera::GetSingleton();
 			if (camera && camera->IsInFirstPerson()) {
 				MenuFramework::Text(Localized(
-					"Target tracking is temporarily paused in first person.",
-					"対象追従：一人称のため一時停止中"));
+					targetFocusSettings.useFirstPersonScreenAFFallback ?
+						"Target tracking paused; 1st-Person AF is active." :
+						"Target tracking is temporarily paused in first person.",
+					targetFocusSettings.useFirstPersonScreenAFFallback ?
+						"対象追従：一時停止中（一人称画面AFを使用）" :
+						"対象追従：一人称のため一時停止中"));
 			}
 		}
 		return changed;
@@ -1194,25 +1236,37 @@ namespace
 		RenderPresetToolbar();
 
 		changed |= RenderFocusModeControls();
-		if (!targetFocusSettings.consoleEnabled && uiSettings.autoFocus) {
+		const auto firstPersonScreenAFFallback = IsFirstPersonScreenAFFallbackActive();
+		if ((!targetFocusSettings.consoleEnabled && uiSettings.autoFocus) || firstPersonScreenAFFallback) {
+			const auto firstPerson = IsFirstPersonView();
+			auto& focusX = ScreenFocusX(uiSettings, firstPerson);
+			auto& focusY = ScreenFocusY(uiSettings, firstPerson);
 			changed |= SliderWithHelp(
 				"Focus Point X",
 				"自動ピント位置 X",
-				&uiSettings.focusX,
+				&focusX,
 				0.0F,
 				1.0F,
 				"%.2f",
-				"Horizontal screen position sampled by Screen AF. Move left to aim left and right to aim right; center is 0.50.",
-				"画面位置AFが距離を読み取る横位置です。スライダーを左へ動かすと照準も左、右へ動かすと右へ移動します。中央は0.50です。");
+				firstPerson ?
+					"Horizontal position sampled by 1st-Person AF. This is stored separately from 3rd-Person AF; center is 0.50." :
+					"Horizontal position sampled by 3rd-Person AF. This is stored separately from 1st-Person AF; center is 0.50.",
+				firstPerson ?
+					"一人称画面AFが距離を読み取る横位置です。三人称とは別に保存され、中央は0.50です。" :
+					"三人称画面AFが距離を読み取る横位置です。一人称とは別に保存され、中央は0.50です。");
 			changed |= SliderWithHelp(
 				"Focus Point Y",
 				"自動ピント位置 Y",
-				&uiSettings.focusY,
+				&focusY,
 				0.0F,
 				1.0F,
 				"%.2f",
-				"Vertical screen position sampled by Screen AF. Move left for the top of the screen and right for the bottom; center is 0.50.",
-				"画面位置AFが距離を読み取る縦位置です。スライダーを左へ動かすと照準は画面上、右へ動かすと画面下へ移動します。中央は0.50です。");
+				firstPerson ?
+					"Vertical position sampled by 1st-Person AF. Move left for the top and right for the bottom; center is 0.50." :
+					"Vertical position sampled by 3rd-Person AF. Move left for the top and right for the bottom; center is 0.50.",
+				firstPerson ?
+					"一人称画面AFが距離を読み取る縦位置です。左で画面上、右で画面下へ移動し、中央は0.50です。" :
+					"三人称画面AFが距離を読み取る縦位置です。左で画面上、右で画面下へ移動し、中央は0.50です。");
 			changed |= SliderWithHelp(
 				"Screen AF Focus Offset",
 				"画面AFのピント位置補正",
@@ -1294,12 +1348,6 @@ namespace
 		}
 		if (showAdvanced) {
 			MenuFramework::SeparatorText(Localized("Bokeh and Quality", "画質・ボケの詳細"));
-			changed |= CheckboxWithHelp(
-				"1st-Person Near Blur",
-				"一人称の手前ぼかし",
-				&uiSettings.enableFirstPersonNearBlur,
-				"When enabled, the configured near blur is also used in first person. Leave this off for clear normal gameplay.",
-				"ONでは設定した手前ぼかしを一人称視点にも適用します。通常プレイで手前をくっきり表示する場合はOFFにします。");
 			changed |= SliderWithHelp(
 					"Blur Quality", "ぼかし品質", &uiSettings.blurQuality, 2.0F, 30.0F, "%.1f",
 					"Higher values improve blur sampling but increase GPU cost.",
@@ -1359,6 +1407,19 @@ namespace
 					&uiSettings.disableInMenus,
 					"Skip DoF in the main menu, loading screens, and world/local maps.",
 					"タイトル・ロード・ワールドマップ・ローカルマップではDoFを停止します。");
+			MenuFramework::SeparatorText(Localized("Focus Details", "ピントの詳細"));
+			changed |= CheckboxWithHelp(
+				"Use 1st-Person AF",
+				"一人称時は一人称画面AFを使用",
+				&targetFocusSettings.useFirstPersonScreenAFFallback,
+				"Uses 1st-Person AF while automatic player tracking is paused in first person. Player tracking resumes when returning to third person. Console-selected target tracking is not affected.",
+				"プレイヤー自動追従が一人称で停止している間、一人称画面AFを使用します。三人称へ戻ると対象追従を再開します。コンソール選択による追従には影響しません。");
+			changed |= CheckboxWithHelp(
+				"1st-Person Near Blur",
+				"一人称の手前ぼかし",
+				&uiSettings.enableFirstPersonNearBlur,
+				"When enabled, the configured near blur is also used in first person. Leave this off for clear normal gameplay.",
+				"ONでは設定した手前ぼかしを一人称視点にも適用します。通常プレイで手前をくっきり表示する場合はOFFにします。");
 		}
 		return changed;
 	}
@@ -1568,9 +1629,11 @@ namespace
 			return;
 		}
 
-		const auto previousX = uiSettings.focusX;
-		const auto previousY = uiSettings.focusY;
-		const auto result = MenuFramework::RenderFocusPicker(uiSettings.focusX, uiSettings.focusY);
+		auto& focusX = ScreenFocusX(uiSettings, focusPickerFirstPerson);
+		auto& focusY = ScreenFocusY(uiSettings, focusPickerFirstPerson);
+		const auto previousX = focusX;
+		const auto previousY = focusY;
+		const auto result = MenuFramework::RenderFocusPicker(focusX, focusY);
 		if (result == MenuFramework::FocusPickerResult::kUnavailable) {
 			FinishFocusPicker(false, true);
 			SetStatus(
@@ -1579,12 +1642,12 @@ namespace
 			return;
 		}
 		if (!focusPickerAcceptInput) {
-			uiSettings.focusX = focusPickerOriginalX;
-			uiSettings.focusY = focusPickerOriginalY;
+			focusX = focusPickerOriginalX;
+			focusY = focusPickerOriginalY;
 			focusPickerAcceptInput = true;
 			return;
 		}
-		if (!NearlyEqual(previousX, uiSettings.focusX) || !NearlyEqual(previousY, uiSettings.focusY)) {
+		if (!NearlyEqual(previousX, focusX) || !NearlyEqual(previousY, focusY)) {
 			DoFRenderer::GetSingleton().SetSettings(uiSettings);
 		}
 		if (result == MenuFramework::FocusPickerResult::kConfirmed) {

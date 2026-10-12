@@ -118,6 +118,10 @@ namespace
 		a_defaults.transitionSpeed = Clamp(ReadFloat(a_section, L"TransitionSpeed", a_defaults.transitionSpeed), 0.01F, 1.0F);
 		a_defaults.focusX = Clamp(ReadFloat(a_section, L"FocusX", a_defaults.focusX), 0.0F, 1.0F);
 		a_defaults.focusY = Clamp(ReadFloat(a_section, L"FocusY", a_defaults.focusY), 0.0F, 1.0F);
+		a_defaults.firstPersonFocusX = Clamp(
+			ReadFloat(a_section, L"FirstPersonFocusX", a_defaults.firstPersonFocusX), 0.0F, 1.0F);
+		a_defaults.firstPersonFocusY = Clamp(
+			ReadFloat(a_section, L"FirstPersonFocusY", a_defaults.firstPersonFocusY), 0.0F, 1.0F);
 		a_defaults.autoFocusOffsetMeters = Clamp(
 			ReadFloat(a_section, L"AutoFocusOffsetMeters", a_defaults.autoFocusOffsetMeters), -10.0F, 10.0F);
 		a_defaults.manualFocusMeters = Clamp(
@@ -161,6 +165,8 @@ namespace
 		success = WriteBool(a_section, L"DisableInMainAndLoadingMenus", a_settings.disableInMenus) && success;
 		success = WriteFloat(a_section, L"FocusX", a_settings.focusX) && success;
 		success = WriteFloat(a_section, L"FocusY", a_settings.focusY) && success;
+		success = WriteFloat(a_section, L"FirstPersonFocusX", a_settings.firstPersonFocusX) && success;
+		success = WriteFloat(a_section, L"FirstPersonFocusY", a_settings.firstPersonFocusY) && success;
 		success = WriteFloat(a_section, L"AutoFocusOffsetMeters", a_settings.autoFocusOffsetMeters) && success;
 		success = WriteFloat(a_section, L"TransitionSpeed", a_settings.transitionSpeed) && success;
 		success = WriteFloat(a_section, L"ManualFocusMeters", a_settings.manualFocusMeters) && success;
@@ -212,6 +218,10 @@ namespace
 			1U));
 		a_defaults.targetFocusOffsetMeters = Clamp(
 			ReadFloat(a_section, L"TargetFocusOffsetMeters", a_defaults.targetFocusOffsetMeters), -10.0F, 10.0F);
+		a_defaults.useFirstPersonScreenAFFallback = ReadBool(
+			a_section,
+			L"UseFirstPersonScreenAFFallback",
+			a_defaults.useFirstPersonScreenAFFallback);
 		return a_defaults;
 	}
 
@@ -234,6 +244,10 @@ namespace
 			a_section,
 			L"TargetFocusOffsetMeters",
 			std::clamp(a_settings.targetFocusOffsetMeters, -10.0F, 10.0F)) && success;
+		success = WriteBool(
+			a_section,
+			L"UseFirstPersonScreenAFFallback",
+			a_settings.useFirstPersonScreenAFFallback) && success;
 		WritePrivateProfileStringW(nullptr, nullptr, nullptr, kPath);
 		return success;
 	}
@@ -291,13 +305,14 @@ CDoF::TargetFocusSettings CDoF::LoadTargetFocusSettings()
 {
 	const auto result = LoadTargetFocusSection(kTargetFocusSection, TargetFocusSettings{});
 	spdlog::info(
-		"Target focus loaded: dialogue enabled={}, preset={}, strength={}; target enabled={}, source={}, offset={} m",
+		"Target focus loaded: dialogue enabled={}, preset={}, strength={}; target enabled={}, source={}, offset={} m, first-person Screen AF fallback={}",
 		result.dialogueEnabled,
 		result.dialoguePreset,
 		result.dialogueDepthStrength,
 		result.consoleEnabled,
 		static_cast<std::uint32_t>(result.targetSource),
-		result.targetFocusOffsetMeters);
+		result.targetFocusOffsetMeters,
+		result.useFirstPersonScreenAFFallback);
 	return result;
 }
 

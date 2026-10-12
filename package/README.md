@@ -1,6 +1,6 @@
-# CinematicDoFStandalone 1.0.4
+# CinematicDoFStandalone 1.0.5
 
-> **Version 1.0.4:** transparent-material and subject-edge handling is stable under HDR0/HDR1, `Keep Sky Sharp` protects sky and moon boundaries, and the optional two-mode `Blend Hair` feature naturally blurs scenery behind hair. Screen AF now keeps separate first- and third-person positions and can replace paused player tracking in first person. Existing presets and INIs remain compatible.
+> **Version 1.0.5:** Screen AF now keeps separate first- and third-person positions and can replace paused player tracking in first person. Community Shaders no longer imposes a hidden near-focus minimum. Existing presets and INIs remain compatible.
 
 ## 日本語
 

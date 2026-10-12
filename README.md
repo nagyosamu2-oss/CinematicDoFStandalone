@@ -1,6 +1,6 @@
-# CinematicDoFStandalone 1.0.4
+# CinematicDoFStandalone 1.0.5
 
-> **Version 1.0.4:** transparent-material and subject-edge handling is stable under HDR0/HDR1, `Keep Sky Sharp` protects sky and moon boundaries, and the optional two-mode `Blend Hair` feature naturally blurs scenery behind hair. Existing presets and INIs remain compatible.
+> **Version 1.0.5:** Screen AF now keeps separate first- and third-person positions and can replace paused player tracking in first person. Community Shaders no longer imposes a hidden near-focus minimum. Existing presets and INIs remain compatible.
 
 ## 日本語
 
@@ -9,8 +9,9 @@ Jiaye氏のCommunity Shaders AIOを基に、Cinematic DoFを単独で利用で�
 ### 特徴
 
 - 単体動作するSKSE統合と日本語／英語UI
-- 3つのフォーカスモード：「ピント固定」、「画面位置AF」、「対象追従」
+- 3つのフォーカスモード：「ピント固定」、一人称／三人称で位置を個別保存する「画面位置AF」、「対象追従」
 - Community Shaders AIO由来のコンソール選択対象追従に加え、プレイヤーの自動選択・追従を追加
+- プレイヤー自動追従が一人称で停止している間、一人称画面AFへ任意で切り替える設定
 - 9つのプリセット、編集機能、配布時初期値への復元
 - 手前／奥ピント範囲の調整
 - 会話中の被写体への自動フォーカス
@@ -33,7 +34,7 @@ Jiaye氏のCommunity Shaders AIOを基に、Cinematic DoFを単独で利用で�
 
 ビルドはSkyrim SE／AEを対象とします。1.0.4の透過・HDR0・空境界処理はメイン環境と`bUse64bitsHDRRenderTarget=0`の最小環境で実ゲーム確認済みです。1.7.104対応とAddress Library v5形式は、1.0.0で検証済みの経路を維持します。Community Shadersは不要です。併用する場合は、二重適用を避けるためCommunity Shaders側のDepth of FieldをOFFにしてください。
 
-人物追従中は、Community ShadersやHDR設定にかかわらず、画面上の人物範囲と実際の深度を組み合わせた共通の人物保護を使用します。接写時に深度を無視して頭部を強制保護する処理は使用せず、首周りや画面端の背景を人物として保護しないようにします。Community Shaders併用時はHDR設定にかかわらず、有効な人物追従中だけ、保存値を変更せず手前ピント範囲の実効値を最低0.17 mにします。非人物の追従対象には適用されません。DoFの距離判定には常にフル解像度のメイン深度を使用し、Community Shadersの有無やSAO・SSR・64-bit HDR設定によって別の深度へ切り替えません。
+人物追従中は、Community ShadersやHDR設定にかかわらず、画面上の人物範囲と実際の深度を組み合わせた共通の人物保護を使用します。接写時に深度を無視して頭部を強制保護する処理は使用せず、首周りや画面端の背景を人物として保護しないようにします。Community Shaders併用時も手前ピント範囲へ隠れた下限を設けず、`0.00 m`を含む保存値をそのまま使用します。DoFの距離判定には常にフル解像度のメイン深度を使用し、Community Shadersの有無やSAO・SSR・64-bit HDR設定によって別の深度へ切り替えません。
 
 ピント境界のサンプルでは、手前と奥で大きく異なるCoCの色が混ざりにくいよう重みを制限します。また、有効な手前ボケの色サンプルが一つもない画素は空のレイヤーとして扱い、HDR0環境で人物周囲に現れていた太い黒膜を防ぎます。
 
@@ -59,7 +60,7 @@ EnableJapanese=true
 SKSE Menu Frameworkを導入している場合、ゲーム中にF1を押し、`Cinematic DoF Standalone` → `Depth of Field`を開きます。
 
 - ピント固定：カメラからピント面までの距離を0.1～2000mで直接指定します。スライダーは近距離の精度を保つ対数操作です。
-- 画面位置AF：指定した画面X／Y位置の深度を読み取ります。
+- 一人称画面AF／三人称画面AF：指定した画面X／Y位置の深度を読み取ります。座標は視点ごとに個別保存され、視点変更時に自動で切り替わります。
 - 対象追従：人物は頭部ノード、非人物は対象の基準位置を投影した距離を使用します。
 - ピント位置補正：マイナスでカメラ側、プラスで奥側へピント面を移動します。
 - レンズ調整：焦点距離で前後の分離を大まかに決め、F値でピント範囲を整え、最後に手前／奥最大ぼかしで強さを決めると扱いやすくなります。
@@ -96,6 +97,7 @@ SKSE Menu Frameworkを導入している場合、ゲーム中にF1を押し、`C
 ### 補足
 
 - 1人称で通常プレイする場合は、詳細設定の「一人称の手前ぼかし」をOFFにすると武器や手元が鮮明になります。
+- プレイヤー自動追従は一人称で一時停止します。詳細設定の「一人称時は一人称画面AFを使用」をONにすると、その間だけ一人称用X／Y位置の画面AFを使い、三人称へ戻ると自動追従を再開します。コンソール選択対象の追従には影響しません。
 - 「空を鮮明に保つ」は未描画の深度から空を判定し、同じスイッチで遠端深度の月も保護します。空色を山・建造物・樹木へ運ばず、空との境界だけを局所被覆率で滑らかに合成します。既存INIや既存プリセットにこの設定がない場合はOFFとして読み込みます。
 - 「髪を馴染ませる」は通常描画と分離されています。OFFでは追加方式を実行しません。モード1は最も滑らかですが透過素材も柔らかくなり、モード2は透過・形・細部と月境界をより保ちます。
 - シルエット撮影モードは現在のメイン深度だけで前景／背景を分類します。水面、月、半透明物、パーティクルは、そのフレームでメイン深度へ書き込まれたかどうかに従います。
@@ -112,8 +114,9 @@ CinematicDoFStandalone is an SKSE plugin that makes Cinematic DoF available as a
 ### Features
 
 - Standalone SKSE integration with English and Japanese UI
-- Three focus modes: Fixed Focus, Screen AF, and Target Tracking
+- Three focus modes: Fixed Focus, Screen AF with separately stored first-/third-person positions, and Target Tracking
 - Console-selected target tracking inherited from the Community Shaders AIO work, plus automatic player selection and tracking
+- An optional 1st-Person AF fallback while automatic player tracking is paused in first person
 - Nine editable presets with bundled defaults
 - Independently adjustable near and far in-focus ranges
 - Automatic focus on the conversation subject during dialogue
@@ -136,7 +139,7 @@ CinematicDoFStandalone is an SKSE plugin that makes Cinematic DoF available as a
 
 The build targets Skyrim SE and AE. Version 1.0.4's transparency, HDR0, and sky-boundary changes were tested in game with the main setup and a minimal setup using `bUse64bitsHDRRenderTarget=0`. Skyrim 1.7.104 support and the Address Library v5 path retain the route validated for version 1.0.0. Community Shaders is optional. If it is installed, disable its Depth of Field effect to avoid applying two DoF effects at once.
 
-While an actor is tracked, one subject-protection path combines the projected actor area with measured depth regardless of Community Shaders or HDR settings. It does not use the former close-up head override that ignored depth, preventing the projected head circle from protecting neck gaps or edge-of-frame background. With Community Shaders, a valid tracked actor receives an effective near-focus floor of 0.17 m regardless of the HDR setting, without changing the saved value. Non-actor targets do not receive it. DoF distance classification always uses the full-resolution main depth and does not switch to another depth buffer based on Community Shaders, SAO, SSR, or 64-bit HDR settings.
+While an actor is tracked, one subject-protection path combines the projected actor area with measured depth regardless of Community Shaders or HDR settings. It does not use the former close-up head override that ignored depth, preventing the projected head circle from protecting neck gaps or edge-of-frame background. With Community Shaders, there is no hidden minimum near-focus range: the saved value, including `0.00 m`, is used unchanged. DoF distance classification always uses the full-resolution main depth and does not switch to another depth buffer based on Community Shaders, SAO, SSR, or 64-bit HDR settings.
 
 Samples across a focus boundary are weighted to avoid mixing colours with strongly incompatible near/far CoC values. If a near-blur pixel has no valid colour samples, it is treated as an empty layer, preventing the thick dark membrane previously visible around subjects in HDR0 configurations.
 
@@ -161,7 +164,7 @@ EnableJapanese=true
 With SKSE Menu Framework installed, press F1 in game and open `Cinematic DoF Standalone` → `Depth of Field`.
 
 - Fixed Focus: directly sets the camera-to-focus-plane distance from 0.1 to 2000 m. Its logarithmic response retains precise short-range adjustment.
-- Screen AF: samples depth at the selected screen X/Y position.
+- 1st-Person AF / 3rd-Person AF: samples depth at the selected screen X/Y position. Each view stores its own coordinates and switches automatically with perspective.
 - Target Tracking: actors use the projected head-node distance; non-actors use the projected reference/anchor distance.
 - Target Focus Offset: negative values move the focus plane toward the camera; positive values move it farther away.
 - Lens workflow: use focal length for broad depth separation, refine the in-focus range with the F-number, then set the final strength with the near and far maximum blur controls.
@@ -188,6 +191,7 @@ When updating from an older version, Custom 1 and Custom 2 keep their original n
 ### Notes
 
 - For normal first-person play, disable `First-Person Near Blur` in Advanced Settings to keep weapons and hands sharp.
+- Automatic player tracking pauses in first person. Enable `Use 1st-Person AF` in Advanced Settings to use the first-person X/Y Screen AF position while paused; returning to third person resumes tracking. Console-selected target tracking is unaffected.
 - `Keep Sky Sharp` identifies sky from unwritten depth and protects far-depth moon pixels through the same switch. It rejects sky-color leakage into geometry and uses local coverage for a soft one-pixel sky boundary. Existing INIs and presets without the setting load it as disabled.
 - `Blend Hair` is separate from standard rendering and does not execute while disabled. Mode 1 gives the smoothest blend but also softens transparency; mode 2 preserves more transparency, shape, detail, and moon boundaries.
 - Silhouette Photo Mode classifies foreground/background solely from the current main depth. Water, moons, transparent objects, and particles follow whether they wrote main depth in that frame.

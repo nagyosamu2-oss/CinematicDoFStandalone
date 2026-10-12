@@ -13,9 +13,6 @@
   - モード1：背景を強く柔らかく馴染ませます。最も滑らかですが、ベールなどの透過素材も柔らかくなります。
   - モード2：透過・形・内側の細部をより保ちながら馴染ませます。強いぼかし時の空・枝葉・月境界も保護します。
 - 追加方式のシェーダー準備に失敗した場合は、通常描画へ自動的にフォールバックします。
-- Community Shaders併用時に人物追従へ自動適用していた手前ピント範囲0.17 mの下限を廃止。スライダーの`0.00 m`を含む保存値をそのまま使用します。
-- 画面位置AFの座標を一人称／三人称で個別保存し、視点に合わせて`一人称画面AF`／`三人称画面AF`へ表示を切り替えます。
-- プレイヤー自動追従が一人称で停止している間、任意で一人称画面AFへ切り替える設定を追加しました。三人称へ戻ると自動追従を再開します。
 - 既存INIとプリセットは互換です。髪の馴染ませは初期状態でOFFです。
 
 ### 実ゲームで確認済み
@@ -51,9 +48,6 @@ Version 1.0.4 stabilizes transparent materials, subject edges, and sky/moon/foli
   - Mode 1: stronger, softer blending. It gives the smoothest transition, but transparent materials such as veils also become softer.
   - Mode 2: preserves more transparency, shape, and interior detail while protecting sky, foliage, and moon boundaries during strong blur.
 - If an optional shader set cannot be prepared, that mode automatically falls back to standard rendering.
-- Removes the automatic 0.17 m near-focus-range floor formerly applied to tracked actors with Community Shaders. Saved values, including `0.00 m`, are now used unchanged.
-- Stores Screen AF coordinates independently for first- and third-person views, with dynamic `1st-Person AF` / `3rd-Person AF` labels.
-- Adds an optional first-person Screen AF fallback while automatic player tracking is paused. Returning to third person resumes player tracking.
 - Existing INIs and presets remain compatible. Hair blending is disabled by default.
 
 ### Validated in game

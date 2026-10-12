@@ -1,6 +1,6 @@
 set_xmakever("3.0.0")
 
-local plugin_version = "1.0.4"
+local plugin_version = "1.0.5"
 
 set_project("CinematicDoFStandalone")
 set_version(plugin_version)

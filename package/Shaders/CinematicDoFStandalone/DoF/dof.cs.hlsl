@@ -278,7 +278,7 @@ float GetDualDepthTransparencyCandidate(uint2 renderPixel)
 	// neighbourhood so unrelated distant alpha-tested foliage is not restored.
 	uint2 inputPixel = GetInputPixel(renderPixel);
 	float rawMainDepth = SkyMaskDepthTexture[inputPixel];
-	if (rawMainDepth >= 1.0f)
+	if (SharedData::IsClearDepth(rawMainDepth))
 		return 0.0f;
 
 	float rawFallbackDepth = DepthTexture[inputPixel];
@@ -366,7 +366,7 @@ float GetSkyClearDepthMask(uint2 renderPixel)
 	// the sky) retain the clear value. Read the source texel directly so sampler
 	// filtering cannot create a false boundary classification.
 	float rawDepth = SkyMaskDepthTexture[GetInputPixel(renderPixel)];
-	return rawDepth >= 1.0f ? 1.0f : 0.0f;
+	return SharedData::IsClearDepth(rawDepth) ? 1.0f : 0.0f;
 }
 
 float GetAntialiasedSkyCoverage(uint2 renderPixel)
@@ -399,10 +399,10 @@ float GetMoonFarDepthProtection(uint2 renderPixel)
 	// Validated sea views place the moon at a raw-depth clear gap of 1e-7..3e-7.
 	// Even the farthest water and terrain remained at
 	// 3e-6 or more. Classify only pixels actually written immediately below the
-	// 1.0 clear value: untouched sky is excluded, as are nearer occluders.
+	// clear-depth far-plane value: untouched sky is excluded, as are nearer occluders.
 	float rawDepth = SkyMaskDepthTexture[GetInputPixel(renderPixel)];
-	float clearGap = 1.0f - rawDepth;
-	return rawDepth < 1.0f && clearGap > 0.0f && clearGap < 1e-6f ? 1.0f : 0.0f;
+	float clearGap = SharedData::GetFarPlaneGap(rawDepth);
+	return !SharedData::IsClearDepth(rawDepth) && clearGap > 0.0f && clearGap < 1e-6f ? 1.0f : 0.0f;
 }
 
 [numthreads(8, 8, 1)] void CS_Silhouette(uint2 DTid : SV_DispatchThreadID)
@@ -428,8 +428,8 @@ float GetSkyHighlightEligibility(float2 renderUV)
 	float2 clampedUV = ClampFullResolutionUV(renderUV);
 	uint2 renderPixel = ClampFullResolutionPixel(int2(clampedUV * SharedData::BufferDim.xy));
 	float rawDepth = SkyMaskDepthTexture[GetInputPixel(renderPixel)];
-	float clearGap = 1.0f - rawDepth;
-	float skyMask = rawDepth >= 1.0f ? 1.0f : 0.0f;
+	float clearGap = SharedData::GetFarPlaneGap(rawDepth);
+	float skyMask = SharedData::IsClearDepth(rawDepth) ? 1.0f : 0.0f;
 	float moonMask = clearGap > 0.0f && clearGap < 1e-6f ? 1.0f : 0.0f;
 	float skyOrMoon = max(skyMask, moonMask);
 	return 1.0f - skyOrMoon;
@@ -460,8 +460,8 @@ float GetSkyGatherEligibility(float2 renderUV, float deepBlurBlend)
 		float2 clampedUV = ClampFullResolutionUV(renderUV);
 		uint2 renderPixel = ClampFullResolutionPixel(int2(clampedUV * SharedData::BufferDim.xy));
 		float rawDepth = SkyMaskDepthTexture[GetInputPixel(renderPixel)];
-		float clearGap = 1.0f - rawDepth;
-		float skyMask = rawDepth >= 1.0f ? 1.0f : 0.0f;
+		float clearGap = SharedData::GetFarPlaneGap(rawDepth);
+		float skyMask = SharedData::IsClearDepth(rawDepth) ? 1.0f : 0.0f;
 		float moonMask = clearGap > 0.0f && clearGap < 1e-6f ? 1.0f : 0.0f;
 		eligibility = (1.0f - moonMask) *
 			(1.0f - skyMask * (1.0f - saturate(deepBlurBlend)));

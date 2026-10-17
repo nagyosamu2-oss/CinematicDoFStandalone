@@ -425,6 +425,7 @@ namespace
 		preset.manualFocusMeters = 46.09F;
 		preset.focalLength = 52.6F;
 		preset.fNumber = 15.2F;
+		preset.nearFocusRangeMeters = 0.0740728F;
 		preset.farFocusRangeMeters = 64.7113F;
 		preset.farPlaneMaxBlur = 1.49F;
 		preset.nearPlaneMaxBlur = 2.45F;
@@ -443,11 +444,12 @@ namespace
 		preset.manualFocusMeters = 46.09F;
 		preset.focalLength = 117.7F;
 		preset.fNumber = 9.8F;
+		preset.nearFocusRangeMeters = 0.0574862F;
 		preset.farFocusRangeMeters = 2.1F;
 		preset.farPlaneMaxBlur = 2.34F;
 		preset.nearPlaneMaxBlur = 1.81F;
 		preset.blurQuality = 8.0F;
-		preset.nearFarDistanceCompensation = 3.7F;
+		preset.nearFarDistanceCompensation = 2.5F;
 		preset.bokehBusyFactor = 0.4F;
 		preset.keepSkySharp = false;
 		return preset;
@@ -461,11 +463,12 @@ namespace
 		preset.manualFocusMeters = 46.09F;
 		preset.focalLength = 98.6F;
 		preset.fNumber = 10.6F;
+		preset.nearFocusRangeMeters = 0.100821F;
 		preset.farFocusRangeMeters = 2.7F;
 		preset.farPlaneMaxBlur = 0.36F;
 		preset.nearPlaneMaxBlur = 1.81F;
 		preset.blurQuality = 8.0F;
-		preset.nearFarDistanceCompensation = 3.67F;
+		preset.nearFarDistanceCompensation = 2.5F;
 		preset.bokehBusyFactor = 0.0F;
 		preset.keepSkySharp = true;
 		return preset;
@@ -544,7 +547,7 @@ namespace
 		preset.nearPlaneMaxBlur = 1.08F;
 		preset.enableFirstPersonNearBlur = true;
 		preset.blurQuality = 7.5F;
-		preset.nearFarDistanceCompensation = 3.83F;
+		preset.nearFarDistanceCompensation = 2.5F;
 		preset.bokehBusyFactor = 0.45F;
 		preset.keepSkySharp = false;
 		return preset;
@@ -1613,7 +1616,7 @@ namespace
 		RenderDialogueFocusControls();
 		MenuFramework::SeparatorText(Localized("Preset Management", "プリセット管理"));
 		RenderActions();
-		MenuFramework::Text("Cinematic DoF Standalone 1.0.5");
+		MenuFramework::Text("Cinematic DoF Standalone 1.0.6");
 		if (fontPushed) {
 			MenuFramework::PopFont();
 		}

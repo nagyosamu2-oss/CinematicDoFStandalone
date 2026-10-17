@@ -110,8 +110,10 @@ namespace
 		std::array<float, 4> cameraData;
 		std::array<float, 4> bufferDimensions;
 		std::array<float, 4> inputRegion;
+		std::uint32_t reverseZ;
+		std::array<std::uint32_t, 3> padding;
 	};
-	static_assert(sizeof(SharedConstants) == 48);
+	static_assert(sizeof(SharedConstants) == 64);
 
 	struct alignas(16) SilhouetteConstants
 	{
@@ -236,6 +238,22 @@ namespace
 		       depthDescription->SampleDesc.Count == 1;
 	}
 
+	bool IsReverseZDepth(ID3D11ShaderResourceView* a_depth)
+	{
+		if (!a_depth) {
+			return false;
+		}
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC viewDescription{};
+		a_depth->GetDesc(&viewDescription);
+		if (viewDescription.Format == DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS) {
+			return true;
+		}
+
+		const auto textureDescription = GetTextureDescription(a_depth);
+		return textureDescription && textureDescription->Format == DXGI_FORMAT_R32G8X24_TYPELESS;
+	}
+
 	struct OutputMergerRestore
 	{
 		ID3D11DeviceContext* context;
@@ -345,6 +363,93 @@ void CDoF::DoFRenderer::SetFocusPickerActive(bool a_active)
 {
 	std::scoped_lock lock(mutex_);
 	focusPickerActive_ = a_active;
+}
+
+void CDoF::DoFRenderer::CapturePreOpaqueDepth()
+{
+	std::scoped_lock lock(mutex_);
+	preOpaqueDepthValid_ = false;
+	if (!experimentalTransparencySettings_.enabled || permanentlyDisabled_) {
+		return;
+	}
+
+	const auto renderer = RE::BSGraphics::Renderer::GetSingleton();
+	if (!renderer) {
+		return;
+	}
+	auto& rendererData = renderer->GetRuntimeData();
+	auto device = reinterpret_cast<ID3D11Device*>(rendererData.forwarder);
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData.context);
+	auto& mainDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+	if (!device || !context || !mainDepth.depthSRV) {
+		return;
+	}
+
+	// Follow the published SRV resource rather than DepthStencilData::texture.
+	// Terrain Blending can temporarily publish its blended R32 depth through this
+	// slot while the struct's original game texture remains R24/R32G8 typeless.
+	ComPtr<ID3D11Resource> sourceResource;
+	mainDepth.depthSRV->GetResource(sourceResource.GetAddressOf());
+	ComPtr<ID3D11Texture2D> sourceTexture;
+	if (!sourceResource || FAILED(sourceResource.As(&sourceTexture)) || !sourceTexture) {
+		return;
+	}
+	D3D11_TEXTURE2D_DESC textureDescription{};
+	sourceTexture->GetDesc(&textureDescription);
+	D3D11_SHADER_RESOURCE_VIEW_DESC viewDescription{};
+	mainDepth.depthSRV->GetDesc(&viewDescription);
+	if (textureDescription.SampleDesc.Count != 1 ||
+		viewDescription.ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D) {
+		return;
+	}
+
+	const auto resourceChanged =
+		preOpaqueDepthDevice_ != device ||
+		preOpaqueDepthTextureFormat_ != textureDescription.Format ||
+		preOpaqueDepthViewFormat_ != viewDescription.Format ||
+		preOpaqueDepthWidth_ != textureDescription.Width ||
+		preOpaqueDepthHeight_ != textureDescription.Height ||
+		preOpaqueDepthSampleCount_ != textureDescription.SampleDesc.Count;
+	if (resourceChanged || !preOpaqueDepthTexture_ || !preOpaqueDepthSRV_) {
+		preOpaqueDepthTexture_.Reset();
+		preOpaqueDepthSRV_.Reset();
+
+		auto copyDescription = textureDescription;
+		copyDescription.Usage = D3D11_USAGE_DEFAULT;
+		copyDescription.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		copyDescription.CPUAccessFlags = 0;
+		copyDescription.MiscFlags = 0;
+		if (Failed(
+				device->CreateTexture2D(&copyDescription, nullptr, preOpaqueDepthTexture_.GetAddressOf()),
+				"Create pre-opaque depth texture") ||
+			Failed(
+				device->CreateShaderResourceView(
+					preOpaqueDepthTexture_.Get(), &viewDescription, preOpaqueDepthSRV_.GetAddressOf()),
+				"Create pre-opaque depth SRV")) {
+			preOpaqueDepthTexture_.Reset();
+			preOpaqueDepthSRV_.Reset();
+			return;
+		}
+
+		preOpaqueDepthDevice_ = device;
+		preOpaqueDepthTextureFormat_ = textureDescription.Format;
+		preOpaqueDepthViewFormat_ = viewDescription.Format;
+		preOpaqueDepthWidth_ = textureDescription.Width;
+		preOpaqueDepthHeight_ = textureDescription.Height;
+		preOpaqueDepthSampleCount_ = textureDescription.SampleDesc.Count;
+	}
+
+	context->CopyResource(preOpaqueDepthTexture_.Get(), sourceTexture.Get());
+	preOpaqueDepthValid_ = true;
+	if (!loggedPreOpaqueDepthCapture_) {
+		loggedPreOpaqueDepthCapture_ = true;
+		spdlog::info(
+			"Captured private pre-opaque depth for hair blending ({}x{}, texture format={}, SRV format={})",
+			textureDescription.Width,
+			textureDescription.Height,
+			static_cast<std::uint32_t>(textureDescription.Format),
+			static_cast<std::uint32_t>(viewDescription.Format));
+	}
 }
 
 bool CDoF::DoFRenderer::CreateTexture(
@@ -784,7 +889,9 @@ std::optional<CDoF::DoFRenderer::TargetFocusSample> CDoF::DoFRenderer::GetTarget
 	// DoF shader.  A projected depth is camera-axis depth even when the target is
 	// far from screen centre, unlike Euclidean camera-to-target distance.
 	const auto cameraData = GetCameraData();
-	const auto denominator = -screenDepth * cameraData[2] + cameraData[0];
+	const auto denominator = reverseZDepth_ ?
+		screenDepth * cameraData[2] + cameraData[1] :
+		-screenDepth * cameraData[2] + cameraData[0];
 	if (!std::isfinite(denominator) || denominator <= 1.0e-5F) {
 		return std::nullopt;
 	}
@@ -910,6 +1017,31 @@ void CDoF::DoFRenderer::ApplyDepthStrength(Settings& a_settings, float a_strengt
 	a_settings.nearPlaneMaxBlur = std::clamp(a_settings.nearPlaneMaxBlur * strength, 0.0F, 4.0F);
 }
 
+void CDoF::DoFRenderer::UpdateDepthConvention(ID3D11ShaderResourceView* a_depth)
+{
+	// A depth SRV can be briefly unavailable during renderer transitions. Keep the
+	// last confirmed convention instead of treating that transient state as standard Z.
+	if (!a_depth) {
+		return;
+	}
+
+	const auto reverseZ = IsReverseZDepth(a_depth);
+	if (!depthConventionInitialized_ || reverseZ != reverseZDepth_) {
+		depthConventionInitialized_ = true;
+		reverseZDepth_ = reverseZ;
+		resources_.focusInitialized = false;
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC viewDescription{};
+		a_depth->GetDesc(&viewDescription);
+		const auto textureDescription = GetTextureDescription(a_depth);
+		spdlog::info(
+			"Depth convention selected: {}; depth SRV format={}; texture format={}",
+			reverseZDepth_ ? "Reverse Z (Bottled Shaders compatible)" : "standard Z",
+			static_cast<std::uint32_t>(viewDescription.Format),
+			textureDescription ? static_cast<std::uint32_t>(textureDescription->Format) : 0U);
+	}
+}
+
 void CDoF::DoFRenderer::ApplySilhouette(RE::RENDER_TARGET a_outputTarget)
 {
 	try {
@@ -956,6 +1088,7 @@ void CDoF::DoFRenderer::ApplySilhouette(RE::RENDER_TARGET a_outputTarget)
 			}
 			return;
 		}
+		UpdateDepthConvention(mainDepth);
 
 		D3D11_TEXTURE2D_DESC inputDescription{};
 		destinationTexture->GetDesc(&inputDescription);
@@ -1056,6 +1189,10 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 	}
 	if (!settings_.enabled || permanentlyDisabled_) {
 		return;
+	}
+	if (const auto renderer = RE::BSGraphics::Renderer::GetSingleton()) {
+		auto& depthStencils = renderer->GetDepthStencilData().depthStencils;
+		UpdateDepthConvention(depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 	}
 	auto effectiveSettings = settings_;
 	auto targetFocusMode = TargetFocusMode::kNone;
@@ -1316,28 +1453,29 @@ void CDoF::DoFRenderer::ApplyBeforePostProcessing()
 		D3D11_TEXTURE2D_DESC inputDescription{};
 		mainTarget.texture->GetDesc(&inputDescription);
 		const auto renderArea = GetActiveRenderArea(context, inputDescription);
-		// The optional transparency modes are dual-depth experiments: the post-Z-prepass copy supplies the
-		// farther background depth used by the ordinary DoF path, while the current
+		// The optional transparency modes are dual-depth experiments: the private
+		// pre-opaque snapshot supplies the farther background depth used by the ordinary DoF path, while the current
 		// main depth supplies the nearer transparent-subject surface used by the
-		// protection mask. Passing mainDepth for both inputs makes their difference
+		// protection mask. Bottled Shaders and newer Community Shaders overwrite the
+		// shared post-Z-prepass target with completed opaque depth, which makes it
+		// identical to mainDepth by the time this pass runs. Passing mainDepth for both inputs makes their difference
 		// identically zero, so the live checkbox cannot have any visible effect.
-		// Keep the completed renderer on mainDepth while the option is OFF, and
-		// select the fallback only for the explicitly enabled experiment.
+		// Capture our own snapshot before opaque rendering instead of depending on
+		// another renderer's later use of that shared target.
 		if (experimentalTransparencySettings_.enabled) {
-			auto experimentalDepth =
-				depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV;
+			auto experimentalDepth = preOpaqueDepthValid_ ? preOpaqueDepthSRV_.Get() : nullptr;
 			if (IsCompatibleDepth(experimentalDepth, inputDescription)) {
 				depth = experimentalDepth;
 				if (!loggedExperimentalTransparencyDepth_) {
 					loggedExperimentalTransparencyDepth_ = true;
 					spdlog::info(
-						"Hair blending mode {} enabled with post-Z-prepass depth plus current main-depth protection",
+						"Hair blending mode {} enabled with private pre-opaque depth plus current main-depth protection",
 						experimentalTransparencySettings_.mode);
 				}
 			} else if (!loggedExperimentalTransparencyDepthUnavailable_) {
 				loggedExperimentalTransparencyDepthUnavailable_ = true;
 				spdlog::warn(
-					"Hair blending requested, but post-Z-prepass depth is unavailable or incompatible; preserving completed main-depth rendering");
+					"Hair blending requested, but private pre-opaque depth is unavailable or incompatible; preserving completed main-depth rendering");
 			}
 		}
 		if (!depthPathChecked_) {
@@ -1588,7 +1726,9 @@ void CDoF::DoFRenderer::Dispatch(
 			static_cast<float>(a_renderLeft),
 			static_cast<float>(a_renderTop),
 			1.0F / static_cast<float>(a_inputWidth),
-			1.0F / static_cast<float>(a_inputHeight) }
+			1.0F / static_cast<float>(a_inputHeight) },
+		.reverseZ = reverseZDepth_ ? 1U : 0U,
+		.padding = {}
 	};
 
 	if (!UpdateConstantBuffer(a_context, resources_.dofConstants.Get(), &dofData, sizeof(dofData)) ||
@@ -1821,7 +1961,9 @@ bool CDoF::DoFRenderer::DispatchSilhouette(
 			static_cast<float>(a_renderLeft),
 			static_cast<float>(a_renderTop),
 			1.0F / static_cast<float>(a_inputWidth),
-			1.0F / static_cast<float>(a_inputHeight) }
+			1.0F / static_cast<float>(a_inputHeight) },
+		.reverseZ = reverseZDepth_ ? 1U : 0U,
+		.padding = {}
 	};
 
 	if (!UpdateConstantBuffer(

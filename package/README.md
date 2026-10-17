@@ -1,6 +1,6 @@
-# CinematicDoFStandalone 1.0.5
+# CinematicDoFStandalone 1.0.6
 
-> **Version 1.0.5:** Screen AF now keeps separate first- and third-person positions and can replace paused player tracking in first person. Community Shaders no longer imposes a hidden near-focus minimum. Existing presets and INIs remain compatible.
+> **Version 1.0.6:** Adds compatibility with the floating-point Reverse Z depth buffer used by Bottled Shaders while preserving both Hair Blend modes. Several built-in preset defaults were also refined from in-game testing. Existing INIs remain compatible.
 
 ## 日本語
 
@@ -32,7 +32,7 @@ Jiaye氏のCommunity Shaders AIOを基に、Cinematic DoFを単独で利用で�
 - Address Library for SKSE Plugins
 - SKSE Menu Framework 3.8.0（ゲーム内UIを使う場合のみ）
 
-ビルドはSkyrim SE／AEを対象とします。1.0.4の透過・HDR0・空境界処理はメイン環境と`bUse64bitsHDRRenderTarget=0`の最小環境で実ゲーム確認済みです。1.7.104対応とAddress Library v5形式は、1.0.0で検証済みの経路を維持します。Community Shadersは不要です。併用する場合は、二重適用を避けるためCommunity Shaders側のDepth of FieldをOFFにしてください。
+ビルドはSkyrim SE／AEを対象とします。1.0.4の透過・HDR0・空境界処理はメイン環境と`bUse64bitsHDRRenderTarget=0`の最小環境で実ゲーム確認済みです。1.0.6ではBottled Shadersの通常Z／Reverse Zの両方で、HDR0と「髪を馴染ませる」モード1・2を実ゲーム確認済みです。1.7.104対応とAddress Library v5形式は、1.0.0で検証済みの経路を維持します。Community Shaders／Bottled Shadersは不要です。併用する場合は、二重適用を避けるためシェーダー側のDepth of FieldをOFFにしてください。
 
 人物追従中は、Community ShadersやHDR設定にかかわらず、画面上の人物範囲と実際の深度を組み合わせた共通の人物保護を使用します。接写時に深度を無視して頭部を強制保護する処理は使用せず、首周りや画面端の背景を人物として保護しないようにします。Community Shaders併用時も手前ピント範囲へ隠れた下限を設けず、`0.00 m`を含む保存値をそのまま使用します。DoFの距離判定には常にフル解像度のメイン深度を使用し、Community Shadersの有無やSAO・SSR・64-bit HDR設定によって別の深度へ切り替えません。
 

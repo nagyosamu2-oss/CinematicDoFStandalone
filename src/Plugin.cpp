@@ -43,6 +43,24 @@ namespace
 		static inline REL::Relocation<decltype(Thunk)> function;
 	};
 
+	struct PreOpaqueDepthHook
+	{
+		static void Thunk(
+			RE::BSBatchRenderer* a_batchRenderer,
+			std::uint32_t a_startRange,
+			std::uint32_t a_endRanges,
+			std::uint32_t a_renderFlags,
+			int a_geometryGroup)
+		{
+			// This call site is reached after the depth prepass and immediately before
+			// the first opaque batches. Install after Community/Bottled Shaders so our
+			// saved original continues through their deferred-rendering thunk.
+			CDoF::DoFRenderer::GetSingleton().CapturePreOpaqueDepth();
+			function(a_batchRenderer, a_startRange, a_endRanges, a_renderFlags, a_geometryGroup);
+		}
+		static inline REL::Relocation<decltype(Thunk)> function;
+	};
+
 	void InstallHooks()
 	{
 		static std::atomic_bool installed{ false };
@@ -58,7 +76,18 @@ namespace
 			mainPostProcessing.address(),
 			MainPostProcessingHook::Thunk);
 
-		spdlog::info("Installed main post-processing hook at 0x{:X}", mainPostProcessing.address());
+		static REL::Relocation<std::uintptr_t> firstOpaqueBatches{
+			REL::RelocationID(99938, 106583),
+			static_cast<std::ptrdiff_t>(REL::Relocate(0x8E, 0x84))
+		};
+		PreOpaqueDepthHook::function = SKSE::GetTrampoline().write_call<5>(
+			firstOpaqueBatches.address(),
+			PreOpaqueDepthHook::Thunk);
+
+		spdlog::info(
+			"Installed render hooks: pre-opaque depth at 0x{:X}, main post-processing at 0x{:X}",
+			firstOpaqueBatches.address(),
+			mainPostProcessing.address());
 	}
 
 	void MessageHandler(SKSE::MessagingInterface::Message* a_message)
@@ -87,7 +116,7 @@ extern "C" __declspec(dllexport) bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadIn
 
 	try {
 		SKSE::Init(a_skse, false);
-		SKSE::AllocTrampoline(28);
+		SKSE::AllocTrampoline(64);
 		const auto settings = CDoF::LoadSettings();
 		CDoF::DoFRenderer::GetSingleton().SetSettings(settings);
 		CDoF::UI::Initialize(settings);

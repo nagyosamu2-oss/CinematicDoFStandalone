@@ -19,6 +19,7 @@ namespace CDoF
 		void SetSneakFocus(SneakFocusSettings a_settings);
 		void SetExperimentalTransparency(ExperimentalTransparencySettings a_settings);
 		void SetFocusPickerActive(bool a_active);
+		void CapturePreOpaqueDepth();
 		void ApplyBeforePostProcessing();
 		void ApplyAfterPostProcessing(RE::RENDER_TARGET a_outputTarget);
 
@@ -144,6 +145,7 @@ namespace CDoF
 			std::uint32_t a_renderTop);
 		bool IsMenuBlocked(const Settings& a_settings) const;
 		bool IsSilhouetteMenuBlocked() const;
+		void UpdateDepthConvention(ID3D11ShaderResourceView* a_depth);
 		void ApplySilhouette(RE::RENDER_TARGET a_outputTarget);
 		std::optional<TargetFocusSample> GetDialogueTargetFocus() const;
 		std::optional<TargetFocusSample> GetPlayerTargetFocus() const;
@@ -177,6 +179,14 @@ namespace CDoF
 		Shaders test6Shaders_{};
 		Shaders test8Shaders_{};
 		ComPtr<ID3D11ComputeShader> silhouetteShader_;
+		ComPtr<ID3D11Texture2D> preOpaqueDepthTexture_;
+		ComPtr<ID3D11ShaderResourceView> preOpaqueDepthSRV_;
+		ID3D11Device* preOpaqueDepthDevice_{};
+		DXGI_FORMAT preOpaqueDepthTextureFormat_{ DXGI_FORMAT_UNKNOWN };
+		DXGI_FORMAT preOpaqueDepthViewFormat_{ DXGI_FORMAT_UNKNOWN };
+		std::uint32_t preOpaqueDepthWidth_{};
+		std::uint32_t preOpaqueDepthHeight_{};
+		std::uint32_t preOpaqueDepthSampleCount_{};
 		ID3D11Device* shaderDevice_{};
 		ID3D11Device* silhouetteShaderDevice_{};
 		bool shadersReady_{ false };
@@ -195,7 +205,11 @@ namespace CDoF
 		bool loggedTargetNearFocusAssist_{ false };
 		bool loggedExperimentalTransparencyDepth_{ false };
 		bool loggedExperimentalTransparencyDepthUnavailable_{ false };
+		bool loggedPreOpaqueDepthCapture_{ false };
+		bool preOpaqueDepthValid_{ false };
 		bool loggedRenderAreaDiagnostics_{ false };
+		bool depthConventionInitialized_{ false };
+		bool reverseZDepth_{ false };
 		bool dialogueOnlyPrewarmed_{ false };
 		bool focusPickerActive_{ false };
 		TargetFocusMode targetFocusMode_{ TargetFocusMode::kNone };

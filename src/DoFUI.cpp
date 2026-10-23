@@ -141,6 +141,28 @@ namespace
 		return changed;
 	}
 
+	bool StarburstRaySelector(Settings& a_settings)
+	{
+		bool changed = false;
+		MenuFramework::Text(Localized("Diffraction Rays", "光条の本数"));
+		MenuFramework::SameLine();
+		constexpr std::array<std::uint32_t, 6> rayCounts{ 4U, 5U, 6U, 8U, 10U, 12U };
+		for (std::size_t index = 0; index < rayCounts.size(); ++index) {
+			if (index != 0)
+				MenuFramework::SameLine();
+			const auto rays = rayCounts[index];
+			const auto label = std::format("{}{}##StarburstRays{}", a_settings.starburstRays == rays ? "*" : "", rays, rays);
+			if (MenuFramework::Button(label.c_str())) {
+				a_settings.starburstRays = rays;
+				changed = true;
+			}
+		}
+		MenuFramework::ItemTooltip(Localized(
+			"Selects the total number of diffraction rays. Odd counts such as five are generated as individually spaced directions.",
+			"回折光条の総本数です。5本などの奇数も、各方向を等間隔に個別生成します。"));
+		return changed;
+	}
+
 	bool SquaredRangeSliderWithHelp(
 		const char* a_englishLabel,
 		const char* a_japaneseLabel,
@@ -499,17 +521,21 @@ namespace
 		preset.autoFocus = false;
 		preset.transitionSpeed = 0.9F;
 		preset.manualFocusMeters = 46.09F;
-		preset.focalLength = 196.7F;
-		preset.fNumber = 5.1F;
-		preset.nearFocusRangeMeters = 0.0369995F;
-		preset.farFocusRangeMeters = 32.8575F;
-		preset.farPlaneMaxBlur = 0.05F;
-		preset.nearPlaneMaxBlur = 1.21F;
-		preset.blurQuality = 8.8F;
-		preset.nearFarDistanceCompensation = 4.91F;
+		preset.focalLength = 81.1F;
+		preset.fNumber = 8.3F;
+		preset.nearFocusRangeMeters = 0.0F;
+		preset.farFocusRangeMeters = 55.0962F;
+		preset.farPlaneMaxBlur = 0.90F;
+		preset.nearPlaneMaxBlur = 0.0F;
+		preset.blurQuality = 7.5F;
+		preset.nearFarDistanceCompensation = 4.0F;
 		preset.bokehBusyFactor = 0.0F;
 		preset.highlightBoost = 0.08F;
-		preset.keepSkySharp = true;
+		preset.starburstStrength = 6.66F;
+		preset.starburstLength = 0.84F;
+		preset.highlightExtractionThreshold = 0.84F;
+		preset.starburstStrongLightSuppression = 0.64F;
+		preset.keepSkySharp = false;
 		return preset;
 	}
 
@@ -564,7 +590,7 @@ namespace
 		preset.autoFocusOffsetMeters = 0.0F;
 		preset.transitionSpeed = 0.9F;
 		preset.manualFocusMeters = 46.09F;
-		preset.focalLength = 70.3F;
+		preset.focalLength = 84.2F;
 		preset.fNumber = 3.4F;
 		preset.farPlaneMaxBlur = 1.81F;
 		preset.nearPlaneMaxBlur = 1.0F;
@@ -576,13 +602,45 @@ namespace
 		preset.postBlurSmoothing = 0.2F;
 		preset.petzvalStrength = 0.0F;
 		preset.apertureBokeh = true;
+		preset.apertureFill = true;
+		preset.apertureShape = 0;
 		preset.apertureBlades = 5;
 		preset.apertureRoundness = 0.1F;
-		preset.apertureShapeStrength = 0.65F;
+		preset.apertureShapeStrength = 0.90F;
 		preset.apertureRotationDegrees = 0.0F;
+		preset.highlightExtractionThreshold = 0.36F;
+		preset.bokehCoreFill = 0.50F;
+		preset.starburstEnabled = false;
+		preset.starburstRays = 6;
+		preset.starburstStrength = 1.0F;
+		preset.starburstLength = 0.65F;
+		preset.starburstRotationDegrees = 0.0F;
 		preset.nearFocusRangeMeters = 0.0F;
 		preset.farFocusRangeMeters = 2.1F;
 		preset.keepSkySharp = false;
+		return preset;
+	}
+
+	Settings ShapeStarburstPreset()
+	{
+		auto preset = ApertureBokehPreset();
+		preset.focalLength = 60.6F;
+		preset.fNumber = 3.1F;
+		preset.nearFocusRangeMeters = 0.0274115F;
+		preset.farPlaneMaxBlur = 0.43F;
+		preset.highlightBoost = 0.38F;
+		preset.postBlurSmoothing = 0.0F;
+		preset.apertureBlades = 6;
+		preset.apertureShapeStrength = 0.20F;
+		preset.highlightExtractionThreshold = 0.38F;
+		preset.bokehCoreFill = 0.50F;
+		preset.starburstEnabled = true;
+		preset.starburstRays = 6;
+		preset.starburstStrength = 6.4F;
+		preset.starburstLength = 0.90F;
+		preset.starburstRotationDegrees = 0.0F;
+		preset.starburstWideFlareSuppression = 0.38F;
+		preset.starburstStrongLightSuppression = 0.63F;
 		return preset;
 	}
 
@@ -618,6 +676,8 @@ namespace
 			FirstPersonPhotoPreset(), {}, TargetDefaults(true, 7, 0.49F, true, TargetFocusSource::kConsole), {} },
 		PresetSlot{ 8, "Aperture Bokeh", "絞り形状", L"Preset.ApertureBokeh", nullptr,
 			ApertureBokehPreset(), {}, TargetDefaults(true, 7, 1.31F, true), {} },
+		PresetSlot{ 9, "Starburst", "光条", L"Preset.ShapeStarburst", nullptr,
+			ShapeStarburstPreset(), {}, TargetDefaults(true, 7, 1.31F, true), {} },
 		PresetSlot{ 4, "Custom 1", "カスタム1", L"Preset.Custom1", L"Preset.Video", Custom1Preset(), {},
 			TargetDefaults(true, 7, 1.21F, true), {} },
 		PresetSlot{ 5, "Custom 2", "カスタム2", L"Preset.Custom2", nullptr, Custom2Preset(), {},
@@ -643,7 +703,11 @@ namespace
 			a_left.enableFirstPersonNearBlur == a_right.enableFirstPersonNearBlur &&
 			a_left.keepSkySharp == a_right.keepSkySharp &&
 			a_left.apertureBokeh == a_right.apertureBokeh &&
+			a_left.apertureFill == a_right.apertureFill &&
+			a_left.apertureShape == a_right.apertureShape &&
 			a_left.apertureBlades == a_right.apertureBlades &&
+			a_left.starburstEnabled == a_right.starburstEnabled &&
+			a_left.starburstRays == a_right.starburstRays &&
 			NearlyEqual(a_left.transitionSpeed, a_right.transitionSpeed) &&
 			NearlyEqual(a_left.focusX, a_right.focusX) &&
 			NearlyEqual(a_left.focusY, a_right.focusY) &&
@@ -665,7 +729,14 @@ namespace
 			NearlyEqual(a_left.petzvalStrength, a_right.petzvalStrength) &&
 			NearlyEqual(a_left.apertureRoundness, a_right.apertureRoundness) &&
 			NearlyEqual(a_left.apertureShapeStrength, a_right.apertureShapeStrength) &&
-			NearlyEqual(a_left.apertureRotationDegrees, a_right.apertureRotationDegrees);
+			NearlyEqual(a_left.apertureRotationDegrees, a_right.apertureRotationDegrees) &&
+			NearlyEqual(a_left.starburstStrength, a_right.starburstStrength) &&
+			NearlyEqual(a_left.starburstLength, a_right.starburstLength) &&
+			NearlyEqual(a_left.highlightExtractionThreshold, a_right.highlightExtractionThreshold) &&
+			NearlyEqual(a_left.starburstRotationDegrees, a_right.starburstRotationDegrees) &&
+			NearlyEqual(a_left.bokehCoreFill, a_right.bokehCoreFill) &&
+			NearlyEqual(a_left.starburstWideFlareSuppression, a_right.starburstWideFlareSuppression) &&
+			NearlyEqual(a_left.starburstStrongLightSuppression, a_right.starburstStrongLightSuppression);
 	}
 
 	bool Matches(const TargetFocusSettings& a_left, const TargetFocusSettings& a_right)
@@ -1368,25 +1439,6 @@ namespace
 					"Bokeh Busy Factor", "ボケの密度", &uiSettings.bokehBusyFactor, 0.0F, 1.0F, "%.2f",
 					"Adjusts how busy or dense out-of-focus highlights appear.",
 					"ピンぼけ部分の光がどれくらい密集して見えるかを調整します。");
-				changed |= CheckboxWithHelp(
-					"Aperture Bokeh", "絞り形状ボケ", &uiSettings.apertureBokeh,
-					"Shapes the blur kernel with a procedurally generated lens aperture. The shape is easiest to see on bright points that are strongly out of focus. No external image is used.",
-					"数値から生成したレンズ絞りの形をボケへ反映します。大きくピンぼけした明るい点ほど形が見えやすくなります。外部画像は使用しません。");
-				if (uiSettings.apertureBokeh) {
-					changed |= ApertureBladeSlider(uiSettings);
-					changed |= SliderWithHelp(
-						"Blade Roundness", "羽根の丸み", &uiSettings.apertureRoundness, 0.0F, 1.0F, "%.2f",
-						"Blends the aperture from a straight-edged polygon toward a circle.",
-						"直線的な多角形から円形へ、絞り形状の丸みを調整します。");
-					changed |= SliderWithHelp(
-						"Shape Strength", "形状の強さ", &uiSettings.apertureShapeStrength, 0.0F, 1.0F, "%.2f",
-						"Controls how strongly the aperture shape affects the blur. Zero behaves like the standard circular blur; one uses the full generated shape.",
-						"絞り形状をボケへ反映する強さです。0では通常の円形ボケ、1では生成した形状を最大限に反映します。");
-					changed |= SliderWithHelp(
-						"Shape Rotation", "形状の回転", &uiSettings.apertureRotationDegrees, 0.0F, 360.0F, "%.0f deg",
-						"Rotates the aperture shape around the optical axis.",
-						"光軸を中心に絞り形状を回転します。");
-				}
 				changed |= SliderWithHelp(
 					"Petzval Strength", "周辺ボケの強さ", &uiSettings.petzvalStrength, 0.0F, 2.0F, "%.2f",
 					"Stretches existing edge bokeh tangentially to reproduce swirling lens bokeh.",
@@ -1404,6 +1456,92 @@ namespace
 					"%.2f",
 					"Applies final smoothing to already blurred regions.",
 					"ぼかし処理後の領域へ仕上げの平滑化を加えます。");
+				changed |= CheckboxWithHelp(
+					"Aperture Bokeh", "絞り形状ボケ", &uiSettings.apertureBokeh,
+					"Shapes the blur kernel with a procedurally generated lens aperture. The shape is easiest to see on bright points that are strongly out of focus. No external image is used.",
+					"数値から生成したレンズ絞りの形をボケへ反映します。大きくピンぼけした明るい点ほど形が見えやすくなります。外部画像は使用しません。");
+				if (uiSettings.apertureBokeh) {
+					changed |= CheckboxWithHelp(
+						"Fill Aperture Interior", "内部を滑らかに埋める", &uiSettings.apertureFill,
+						"Uses a denser, area-filled aperture gather so the centre of shaped bokeh remains smooth. Intended for screenshots; GPU cost increases substantially.",
+						"形状ボケの内部全体を高密度で集め、中央まで滑らかに埋めます。撮影向けの機能で、GPU負荷が大きく増加します。");
+					MenuFramework::Text(Localized("Bokeh Shape", "ボケ形状"));
+					MenuFramework::SameLine();
+					constexpr std::array<std::pair<const char*, const char*>, 3> shapeLabels{
+						std::pair{ "Aperture", "絞り" },
+						std::pair{ "Star", "星" },
+						std::pair{ "Heart", "ハート" }
+					};
+					for (std::uint32_t shape = 0; shape < shapeLabels.size(); ++shape) {
+						if (shape != 0)
+							MenuFramework::SameLine();
+						const auto& [english, japanese] = shapeLabels[shape];
+						const auto label = std::string(uiSettings.apertureShape == shape ? "*" : "") +
+							Localized(english, japanese);
+						if (MenuFramework::Button(label.c_str())) {
+							uiSettings.apertureShape = shape;
+							changed = true;
+						}
+					}
+					MenuFramework::ItemTooltip(Localized(
+						"Selects the procedurally generated bokeh silhouette. Star uses the blade count as its number of points.",
+						"数式から生成するボケの輪郭を選びます。星では絞り羽根枚数が頂点数になります。"));
+					if (uiSettings.apertureShape != 2U)
+						changed |= ApertureBladeSlider(uiSettings);
+					changed |= SliderWithHelp(
+						"Shape Roundness", "形状の丸み", &uiSettings.apertureRoundness, 0.0F, 1.0F, "%.2f",
+						"Blends the selected silhouette toward a circle.",
+						"選択した輪郭を円形へ近づけます。");
+					changed |= SliderWithHelp(
+						"Shape Strength", "形状の強さ", &uiSettings.apertureShapeStrength, 0.0F, 1.0F, "%.2f",
+						"Controls how strongly the aperture shape affects the blur. Zero behaves like the standard circular blur; one uses the full generated shape.",
+						"絞り形状をボケへ反映する強さです。0では通常の円形ボケ、1では生成した形状を最大限に反映します。");
+					changed |= SliderWithHelp(
+						"Shape Rotation", "形状の回転", &uiSettings.apertureRotationDegrees, 0.0F, 360.0F, "%.0f deg",
+						"Rotates the aperture shape around the optical axis.",
+						"光軸を中心に絞り形状を回転します。");
+					changed |= SliderWithHelp(
+						"Highlight Extraction Threshold", "明部抽出しきい値", &uiSettings.highlightExtractionThreshold, 0.20F, 1.50F, "%.2f",
+						"Shared brightness threshold for diffraction rays and bokeh core fill. Lower values include softer bright regions.",
+						"回折光条とボケ中心の補光で共用する明るさのしきい値です。下げるほど曖昧な明部も対象になります。");
+					changed |= SliderWithHelp(
+						"Bokeh Core Fill", "ボケ中心の補光", &uiSettings.bokehCoreFill, 0.0F, 2.0F, "%.2f",
+						"Isotropically returns nearby highlight energy only where the shaped bokeh center is dimmer. It works independently of diffraction rays.",
+						"周囲より薄い形状ボケの中心だけへ、近傍の明るさを方向性なしで戻します。回折光条とは独立して使用できます。");
+				}
+				changed |= CheckboxWithHelp(
+					"Diffraction Starburst", "回折光条", &uiSettings.starburstEnabled,
+					"Adds aperture-diffraction rays to strongly defocused bright points. The effect becomes longer and stronger as the F-number increases. This is an expensive screenshot-oriented effect.",
+					"大きくピンぼけした明るい点へ絞り回折の光条を加えます。F値が大きいほど長く強くなります。GPU負荷の大きい撮影向け機能です。");
+				if (uiSettings.starburstEnabled) {
+					changed |= StarburstRaySelector(uiSettings);
+					changed |= SliderWithHelp(
+						"Starburst Strength", "光条の強さ", &uiSettings.starburstStrength, 0.0F, 8.0F, "%.2f",
+						"Controls the brightness of the diffraction rays after F-number scaling. The extended upper range is intended for strongly emphasized screenshot effects.",
+						"F値による補正後の回折光条の明るさです。拡張した高い範囲は、撮影時に光条を強く強調する用途向けです。");
+					changed |= SliderWithHelp(
+						"Starburst Length", "光条の長さ", &uiSettings.starburstLength, 0.05F, 1.0F, "%.2f",
+						"Controls the maximum ray length. The final length also follows the F-number.",
+						"光条の最大長を調整します。最終的な長さはF値にも連動します。");
+					changed |= SliderWithHelp(
+						"Starburst Rotation", "光条の回転", &uiSettings.starburstRotationDegrees, 0.0F, 180.0F, "%.0f deg",
+						"Rotates all diffraction-ray axes together.",
+						"すべての回折光条の軸をまとめて回転します。");
+					changed |= SliderWithHelp(
+						"Wide-Flare Suppression", "広域フレア抑制", &uiSettings.starburstWideFlareSuppression, 0.0F, 1.0F, "%.2f",
+						"Reduces diffraction rays generated from broad, nearly uniform lens flare while preserving compact bright sources. Zero disables the filter.",
+						"周囲まで一様に明るい広域レンズフレアから発生する光条を抑え、局所的な明るい光源を残します。0で無効です。");
+					changed |= SliderWithHelp(
+						"Strong-Light Suppression", "強光源抑制", &uiSettings.starburstStrongLightSuppression, 0.0F, 1.0F, "%.2f",
+						"Softly compresses diffraction rays from extremely bright sources while preserving moderate reflections. Zero disables the compression.",
+						"極端に明るい光源から発生する光条だけを緩やかに圧縮し、中程度の反射光を残します。0で無効です。");
+					if (!uiSettings.apertureBokeh) {
+						changed |= SliderWithHelp(
+							"Highlight Extraction Threshold", "明部抽出しきい値", &uiSettings.highlightExtractionThreshold, 0.20F, 1.50F, "%.2f",
+							"Brightness threshold for diffraction rays. This control appears in the aperture-shape block when Aperture Bokeh is enabled.",
+							"回折光条を発生させる明るさのしきい値です。絞り形状ボケが有効な場合は、絞り形状の項目内に表示されます。");
+					}
+				}
 				changed |= CheckboxWithHelp(
 					"Disable in Main/Loading/Map Menus",
 					"タイトル・ロード・マップ画面ではDoFを停止",
@@ -1616,7 +1754,7 @@ namespace
 		RenderDialogueFocusControls();
 		MenuFramework::SeparatorText(Localized("Preset Management", "プリセット管理"));
 		RenderActions();
-		MenuFramework::Text("Cinematic DoF Standalone 1.0.6");
+		MenuFramework::Text("Cinematic DoF Standalone 1.0.7");
 		if (fontPushed) {
 			MenuFramework::PopFont();
 		}

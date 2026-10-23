@@ -2,14 +2,25 @@
 
 CinematicDoFStandalone is an SKSE plugin that makes Cinematic DoF available as a standalone effect. It is based on Jiaye's Community Shaders AIO work, but Community Shaders itself is not required.
 
-Version 1.0.3 stabilizes transparent-material handling under HDR0/HDR1, HDR0 near-blur coverage, and boundary composition for sky, moons, mountains, buildings, and foliage. `Keep Sky Sharp` prevents sky-color leakage while allowing thin geometry against the sky to blur naturally. Existing preset and INI compatibility is retained.
+Version 1.0.7 supports HDR0/HDR1 and Bottled Shaders' Reverse Z depth buffer, and integrates aperture, star, and heart bokeh, filled aperture sampling, diffraction starburst, bokeh core fill, wide-flare suppression, and strong-light suppression. Existing preset and INI compatibility is retained.
+
+## Version 1.0.7
+
+- Adds star and heart bokeh plus filled aperture sampling
+- Adds diffraction starburst with 4, 5, 6, 8, 10, or 12 rays, strength, length, and rotation controls
+- Adds Wide-Flare Suppression for rays generated from broad lens flare
+- Adds Strong-Light Suppression to smoothly compress rays from extremely bright windows and light sources
+- Adds Highlight Extraction Threshold and Bokeh Core Fill
+- Adds in-game-tuned preset 7 Aperture Bokeh and preset 8 Starburst
+- Updates the bundled default for preset 10 Custom 2 to a miniature-style setup that stays sharp through a set distance, without renaming it
+- Moves Custom 1/2 to slots 9/10 without changing their saved values or stable internal IDs
 
 ## Features
 
 - Standalone SKSE integration with English and Japanese UI
 - Three focus modes: Fixed Focus, Screen AF, and Target Tracking
 - Console-selected target tracking plus automatic player selection and tracking
-- Nine editable presets with bundled defaults
+- Ten editable presets with bundled defaults
 - Independent near/far in-focus ranges and near/far maximum blur controls
 - Automatic focus on the conversation subject during dialogue
 - Option to disable near blur in first person
@@ -17,7 +28,8 @@ Version 1.0.3 stabilizes transparent-material handling under HDR0/HDR1, HDR0 nea
 - Independent two-colour Silhouette Photo Mode that also works while DoF is off
 - Logarithmic Fixed Focus distance control from 0.1 to 2000 m
 - An optional, unassigned-by-default keyboard hotkey for toggling DoF
-- Aperture-shaped bokeh with adjustable blade count, roundness, strength, rotation, and highlight emphasis
+- Aperture, star, and heart bokeh with filled sampling, highlight extraction, and bokeh core fill controls
+- Diffraction starburst with adjustable ray count, strength, length, rotation, wide-flare suppression, and strong-light suppression
 
 ## Requirements
 
@@ -26,16 +38,16 @@ Version 1.0.3 stabilizes transparent-material handling under HDR0/HDR1, HDR0 nea
 - Address Library for SKSE Plugins
 - SKSE Menu Framework 3.8.0 only if you want the in-game UI
 
-The build targets Skyrim SE and AE. Version 1.0.3's transparency, HDR0, and sky-boundary changes were tested in game on AE 1.6.1170 with the main setup and a minimal setup using `bUse64bitsHDRRenderTarget=0`. Community Shaders is optional. If it is installed, disable its Depth of Field effect to avoid applying two DoF effects at once.
+The build targets Skyrim SE and AE. Transparency, HDR0, and sky-boundary processing were tested with the main setup and a minimal setup using `bUse64bitsHDRRenderTarget=0`. Depth handling from version 1.0.6 onward was tested in game with both conventional and reversed Z under Bottled Shaders. Community Shaders and Bottled Shaders are optional. If either is installed, disable its Depth of Field effect to avoid applying two DoF effects at once.
 
-While an actor is tracked, the plugin combines the projected actor area with measured depth to protect the actor regardless of Community Shaders or HDR settings. With Community Shaders, tracked actors receive an effective near-focus floor of 0.17 m; when 64-bit HDR is explicitly disabled, the effective floor is 0.15 m. Saved INI and preset values are not changed.
+While an actor is tracked, the plugin combines the projected actor area with measured depth to protect the actor regardless of Community Shaders or HDR settings. DoF distance classification always uses the full-resolution main depth, and saved near-focus values remain unchanged when Community Shaders is present.
 
 ## Installation
 
 1. For a new installation, install the `Full-MO2` package. It includes the INI with the bundled defaults.
 2. When updating from an older version, use the INI-free `Update-Merge-MO2` package and choose `Merge` into the existing mod in MO2. `Replace` also deletes the existing INI.
 3. Installing the `Full-MO2` package over an existing setup replaces the user's saved settings with the bundled defaults.
-4. If Community Shaders is installed, disable Depth of Field in Community Shaders.
+4. If Community Shaders or Bottled Shaders is installed, disable Depth of Field in that shader suite.
 
 For Japanese UI text, set `EnableJapanese=true` under `[Fonts]` in `Data/SKSE/Plugins/SKSEMenuFramework.ini`.
 
@@ -56,7 +68,7 @@ Hotkey assignments are saved to the INI and are not part of a preset. Toggling D
 
 ## Presets and saving
 
-The nine slots are Gameplay, Cinematic, View Focus, Photo Portrait, Photo Wide, First-Person Photo, Aperture Bokeh, Custom 1, and Custom 2. Existing Custom 1/2 values keep their named INI sections and stable internal IDs while moving visually to slots 8/9, so an upgrade does not overwrite them.
+The ten slots are Gameplay, Cinematic, View Focus, Photo Portrait, Photo Wide, First-Person Photo, Aperture Bokeh, Starburst, Custom 1, and Custom 2. Existing Custom 1/2 values keep their named INI sections and stable internal IDs while moving visually to slots 9/10, so an upgrade does not overwrite them.
 
 - Preset number / Apply: applies the stored settings to the current image. It does not change the preset slot or startup settings.
 - Store Current: saves the current DoF, dialogue-focus, and target-tracking values in the selected preset slot. It does not change startup settings or the UI language.

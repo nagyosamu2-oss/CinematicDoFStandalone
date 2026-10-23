@@ -2,7 +2,7 @@
 
 namespace CDoF
 {
-	inline constexpr std::uint32_t kPresetSlotCount{ 9 };
+	inline constexpr std::uint32_t kPresetSlotCount{ 10 };
 	inline constexpr std::uint32_t kMaxPresetIndex{ kPresetSlotCount - 1 };
 	inline constexpr float kManualFocusMinMeters{ 0.1F };
 	inline constexpr float kManualFocusMaxMeters{ 2000.0F };
@@ -42,10 +42,22 @@ namespace CDoF
 		float postBlurSmoothing{ 0.0F };
 		float petzvalStrength{ 0.0F };
 		bool apertureBokeh{ false };
+		bool apertureFill{ false };
+		// 0 = regular aperture, 1 = star, 2 = heart.
+		std::uint32_t apertureShape{ 0 };
 		std::uint32_t apertureBlades{ 6 };
 		float apertureRoundness{ 0.35F };
 		float apertureShapeStrength{ 1.0F };
 		float apertureRotationDegrees{ 0.0F };
+		bool starburstEnabled{ false };
+		std::uint32_t starburstRays{ 6 };
+		float starburstStrength{ 1.00F };
+		float starburstLength{ 0.65F };
+		float highlightExtractionThreshold{ 0.65F };
+		float starburstRotationDegrees{ 0.0F };
+		float bokehCoreFill{ 0.50F };
+		float starburstWideFlareSuppression{ 0.0F };
+		float starburstStrongLightSuppression{ 0.0F };
 	};
 
 	struct TargetFocusSettings

@@ -146,6 +146,9 @@ namespace
 		a_defaults.postBlurSmoothing = Clamp(ReadFloat(a_section, L"PostBlurSmoothing", a_defaults.postBlurSmoothing), 0.0F, 2.0F);
 		a_defaults.petzvalStrength = Clamp(ReadFloat(a_section, L"PetzvalStrength", a_defaults.petzvalStrength), 0.0F, 2.0F);
 		a_defaults.apertureBokeh = ReadBool(a_section, L"ApertureBokeh", a_defaults.apertureBokeh);
+		a_defaults.apertureFill = ReadBool(a_section, L"ApertureFill", a_defaults.apertureFill);
+		a_defaults.apertureShape = std::clamp(
+			ReadUInt(a_section, L"ApertureShape", a_defaults.apertureShape), 0U, 2U);
 		a_defaults.apertureBlades = std::clamp(
 			ReadUInt(a_section, L"ApertureBlades", a_defaults.apertureBlades), 3U, 12U);
 		a_defaults.apertureRoundness = Clamp(
@@ -154,6 +157,26 @@ namespace
 			ReadFloat(a_section, L"ApertureShapeStrength", a_defaults.apertureShapeStrength), 0.0F, 1.0F);
 		a_defaults.apertureRotationDegrees = Clamp(
 			ReadFloat(a_section, L"ApertureRotationDegrees", a_defaults.apertureRotationDegrees), 0.0F, 360.0F);
+		a_defaults.starburstEnabled = ReadBool(a_section, L"StarburstEnabled", a_defaults.starburstEnabled);
+		a_defaults.starburstRays = std::clamp(
+			ReadUInt(a_section, L"StarburstRays", a_defaults.starburstRays), 4U, 12U);
+		a_defaults.starburstStrength = Clamp(
+			ReadFloat(a_section, L"StarburstStrength", a_defaults.starburstStrength), 0.0F, 8.0F);
+		a_defaults.starburstLength = Clamp(
+			ReadFloat(a_section, L"StarburstLength", a_defaults.starburstLength), 0.05F, 1.0F);
+		const auto legacyStarburstThreshold =
+			ReadFloat(a_section, L"StarburstThreshold", a_defaults.highlightExtractionThreshold);
+		a_defaults.highlightExtractionThreshold = Clamp(
+			ReadFloat(a_section, L"HighlightExtractionThreshold", legacyStarburstThreshold), 0.20F, 1.50F);
+		a_defaults.starburstRotationDegrees = Clamp(
+			ReadFloat(a_section, L"StarburstRotationDegrees", a_defaults.starburstRotationDegrees), 0.0F, 180.0F);
+		const auto legacyStarburstCoreFill = ReadFloat(a_section, L"StarburstCoreFill", a_defaults.bokehCoreFill);
+		a_defaults.bokehCoreFill = Clamp(
+			ReadFloat(a_section, L"BokehCoreFill", legacyStarburstCoreFill), 0.0F, 2.0F);
+		a_defaults.starburstWideFlareSuppression = Clamp(
+			ReadFloat(a_section, L"StarburstWideFlareSuppression", a_defaults.starburstWideFlareSuppression), 0.0F, 1.0F);
+		a_defaults.starburstStrongLightSuppression = Clamp(
+			ReadFloat(a_section, L"StarburstStrongLightSuppression", a_defaults.starburstStrongLightSuppression), 0.0F, 1.0F);
 		return a_defaults;
 	}
 
@@ -185,10 +208,21 @@ namespace
 		success = WriteFloat(a_section, L"PostBlurSmoothing", a_settings.postBlurSmoothing) && success;
 		success = WriteFloat(a_section, L"PetzvalStrength", a_settings.petzvalStrength) && success;
 		success = WriteBool(a_section, L"ApertureBokeh", a_settings.apertureBokeh) && success;
+		success = WriteBool(a_section, L"ApertureFill", a_settings.apertureFill) && success;
+		success = WriteUInt(a_section, L"ApertureShape", std::clamp(a_settings.apertureShape, 0U, 2U)) && success;
 		success = WriteUInt(a_section, L"ApertureBlades", std::clamp(a_settings.apertureBlades, 3U, 12U)) && success;
 		success = WriteFloat(a_section, L"ApertureRoundness", a_settings.apertureRoundness) && success;
 		success = WriteFloat(a_section, L"ApertureShapeStrength", a_settings.apertureShapeStrength) && success;
 		success = WriteFloat(a_section, L"ApertureRotationDegrees", a_settings.apertureRotationDegrees) && success;
+		success = WriteBool(a_section, L"StarburstEnabled", a_settings.starburstEnabled) && success;
+		success = WriteUInt(a_section, L"StarburstRays", std::clamp(a_settings.starburstRays, 4U, 12U)) && success;
+		success = WriteFloat(a_section, L"StarburstStrength", a_settings.starburstStrength) && success;
+		success = WriteFloat(a_section, L"StarburstLength", a_settings.starburstLength) && success;
+		success = WriteFloat(a_section, L"HighlightExtractionThreshold", a_settings.highlightExtractionThreshold) && success;
+		success = WriteFloat(a_section, L"StarburstRotationDegrees", a_settings.starburstRotationDegrees) && success;
+		success = WriteFloat(a_section, L"BokehCoreFill", a_settings.bokehCoreFill) && success;
+		success = WriteFloat(a_section, L"StarburstWideFlareSuppression", a_settings.starburstWideFlareSuppression) && success;
+		success = WriteFloat(a_section, L"StarburstStrongLightSuppression", a_settings.starburstStrongLightSuppression) && success;
 		WritePrivateProfileStringW(nullptr, nullptr, nullptr, kPath);
 		return success;
 	}

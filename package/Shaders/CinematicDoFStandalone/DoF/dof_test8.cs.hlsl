@@ -165,7 +165,18 @@ cbuffer DoFCB : register(b1)
 	float HeadGuardRadius;
 	uint KeepSkySharp;
 	float2 TargetGuardAxis;
-	uint2 pad4;
+	uint pad4;
+	uint ApertureOptions;
+	uint StarburstEnabled;
+	uint StarburstRays;
+	float StarburstStrength;
+	float StarburstLength;
+	float HighlightExtractionThreshold;
+	float StarburstRotationAngle;
+	float BokehCoreFill;
+	float StarburstWideFlareSuppression;
+	float StarburstStrongLightSuppression;
+	float3 StarburstPadding;
 };
 
 cbuffer SilhouetteCB : register(b2)
@@ -651,6 +662,16 @@ void FillFocusInfoData(inout FocusInfo toFill)
 // inscribed in the normal circular gather disc; roundness and strength blend its
 // boundary back toward the original circle. Moving the gather samples themselves
 // makes the aperture silhouette visible without relying on a sampled mask weight.
+uint GetApertureShapeType()
+{
+	return (ApertureOptions >> 1) & 3;
+}
+
+bool IsApertureFillEnabled()
+{
+	return (ApertureOptions & 1) != 0;
+}
+
 float GetApertureRadius(float angle)
 {
 	float blades = max((float)ApertureBlades, 3.0f);
@@ -662,12 +683,55 @@ float GetApertureRadius(float angle)
 	return lerp(polygonRadius, 1.0f, saturate(ApertureRoundness));
 }
 
+float GetStarApertureRadius(float angle)
+{
+	float points = max((float)ApertureBlades, 3.0f);
+	float halfSector = Math::PI / points;
+	float rotation = Math::TAU * HighlightShapeRotationAngle;
+	float localAngle = abs(fmod(angle - rotation + halfSector + Math::TAU * 2.0f, halfSector * 2.0f) - halfSector);
+	const float innerRadius = 0.48f;
+	float numerator = innerRadius * sin(halfSector);
+	float denominator = cos(localAngle) * innerRadius * sin(halfSector) -
+		sin(localAngle) * (innerRadius * cos(halfSector) - 1.0f);
+	float starRadius = numerator / max(denominator, 1e-4f);
+	return lerp(starRadius, 1.0f, saturate(ApertureRoundness));
+}
+
+float GetHeartApertureRadius(float angle)
+{
+	// The implicit curve points downward in texture space at zero rotation.
+	// Add half a turn so the UI default shows the familiar upright heart.
+	float localAngle = angle - Math::TAU * HighlightShapeRotationAngle + Math::PI;
+	float sine;
+	float cosine;
+	sincos(localAngle, sine, cosine);
+	float directionTerm = -cosine * cosine * sine * sine * sine;
+	float lowRadius = 0.0f;
+	float highRadius = 2.0f;
+	[unroll]
+	for (int iteration = 0; iteration < 7; ++iteration) {
+		float radius = (lowRadius + highRadius) * 0.5f;
+		float radius2 = radius * radius;
+		float radialBase = radius2 - 1.0f;
+		float implicitValue = radialBase * radialBase * radialBase -
+			radius2 * radius2 * radius * directionTerm;
+		if (implicitValue > 0.0f)
+			highRadius = radius;
+		else
+			lowRadius = radius;
+	}
+	return lerp((lowRadius + highRadius) * 0.5f, 1.0f, saturate(ApertureRoundness));
+}
+
 float2 ApplyApertureShape(float2 pointOffset, float angle)
 {
 	if (HighlightShape == 0)
 		return pointOffset;
-	float apertureRadius = GetApertureRadius(angle);
-	return pointOffset * lerp(1.0f, apertureRadius, saturate(ApertureShapeStrength));
+	uint shapeType = GetApertureShapeType();
+	float shapeStrength = saturate(ApertureShapeStrength);
+	float apertureRadius = shapeType == 2 ? GetHeartApertureRadius(angle) :
+		(shapeType == 1 ? GetStarApertureRadius(angle) : GetApertureRadius(angle));
+	return pointOffset * lerp(1.0f, apertureRadius, shapeStrength);
 }
 
 // The near gather already produces a useful aperture silhouette with the
@@ -692,9 +756,49 @@ float2 ApplyFarApertureShape(float2 pointOffset, float angle)
 	if (HighlightShape == 0)
 		return pointOffset;
 
-	float apertureRadius = GetEqualAreaFarApertureRadius(angle);
 	float shapeStrength = sqrt(saturate(ApertureShapeStrength));
+	uint shapeType = GetApertureShapeType();
+	if (shapeType == 2) {
+		float equalAreaScale = lerp(0.93f, 1.0f, saturate(ApertureRoundness));
+		float apertureRadius = GetHeartApertureRadius(angle) * equalAreaScale;
+		return pointOffset * lerp(1.0f, apertureRadius, shapeStrength);
+	}
+	if (shapeType == 1) {
+		float points = max((float)ApertureBlades, 3.0f);
+		float starArea = points * 0.48f * sin(Math::PI / points);
+		float equalAreaScale = min(sqrt(Math::PI / max(starArea, 1e-4f)), 1.45f);
+		equalAreaScale = lerp(equalAreaScale, 1.0f, saturate(ApertureRoundness));
+		float apertureRadius = GetStarApertureRadius(angle) * equalAreaScale;
+		return pointOffset * lerp(1.0f, apertureRadius, shapeStrength);
+	}
+	float apertureRadius = GetEqualAreaFarApertureRadius(angle);
 	return pointOffset * lerp(1.0f, apertureRadius, shapeStrength);
+}
+
+// Optional screenshot-quality filled aperture sampling. Mode 0 preserves the
+// completed kernel exactly; High and Highest add radial and angular coverage.
+float GetFilledApertureRingCount(float baseRingCount)
+{
+	if (!IsApertureFillEnabled())
+		return baseRingCount;
+	return min(baseRingCount + 2.0f, 34.0f);
+}
+
+float GetFilledAperturePointsFirstRing()
+{
+	return IsApertureFillEnabled() ? 9.0f : 7.0f;
+}
+
+// Highest uses only the outer fifth of the aperture for a soft edge mean.
+// The completed legacy path keeps its broader Experiment 15 rim selection.
+float GetApertureRimFactor(float normalizedRadius)
+{
+	return smoothstep(0.50f, 0.85f, normalizedRadius);
+}
+
+float GetApertureRimBlend()
+{
+	return IsApertureFillEnabled() ? 0.0f : 0.60f;
 }
 
 // Far samples keep a mild rim preference so small distant lights retain a
@@ -706,7 +810,8 @@ float CalculateApertureHighlightWeight(float3 color, float normalizedRadius, flo
 
 	float luma = Color::RGBToLuminance(color);
 	float brightMask = smoothstep(0.25f, 0.85f, luma);
-	float rimWeight = lerp(0.15f, 1.0f, smoothstep(0.25f, 1.0f, normalizedRadius));
+	float rimWeight = IsApertureFillEnabled() ? 1.0f :
+		lerp(0.15f, 1.0f, smoothstep(0.25f, 1.0f, normalizedRadius));
 	float defocusWeight = smoothstep(0.20f, 1.0f, saturate(defocusAmount));
 	return brightMask * rimWeight * defocusWeight * saturate(ApertureShapeStrength);
 }
@@ -745,6 +850,144 @@ float3 BlendSoftApertureHighlight(
 	float highlightBlend = saturate(HighlightBoost) * coverage;
 	return lerp(blurredColor, max(blurredColor, highlightMean), highlightBlend);
 }
+
+float3 ExtractEffectHighlight(float2 uv)
+{
+	float3 tap = max(TexFarBlur.SampleLevel(LinearSampler, ClampHalfResolutionUV(uv), 0).rgb, 0.0f);
+	float luma = Color::RGBToLuminance(tap);
+	float threshold = max(HighlightExtractionThreshold, 0.01f);
+	float eligibility = smoothstep(threshold, threshold + 0.35f, luma);
+	float excess = max(luma - threshold, 0.0f) / max(luma, 1e-4f);
+	return tap * eligibility * excess;
+}
+
+// Broad screen-space lens flare can already be present in the completed blur
+// layer.  Compare each candidate with a wider four-tap ring so a compact light
+// remains eligible while a large, nearly uniform flare does not seed rays.
+// This filtered path is deliberately starburst-only: aperture core fill keeps
+// using ExtractEffectHighlight unchanged.
+float3 ExtractStarburstHighlight(float2 uv)
+{
+	float3 sourceHighlight = ExtractEffectHighlight(uv);
+	float rejection = saturate(StarburstWideFlareSuppression);
+	float wideFlareScale = 1.0f;
+	if (rejection > 0.0f) {
+		float centerLuma = Color::RGBToLuminance(sourceHighlight);
+
+		float resolutionScale = max(SharedData::BufferDim.y / 1080.0f, 0.5f);
+		float ringPixels = lerp(32.0f, 56.0f, saturate(StarburstLength)) * resolutionScale;
+		float2 ringStep = float2(SharedData::BufferDim.z, SharedData::BufferDim.w) * ringPixels;
+		float surroundLuma = 0.0f;
+		surroundLuma += Color::RGBToLuminance(ExtractEffectHighlight(uv + float2( ringStep.x, 0.0f)));
+		surroundLuma += Color::RGBToLuminance(ExtractEffectHighlight(uv + float2(-ringStep.x, 0.0f)));
+		surroundLuma += Color::RGBToLuminance(ExtractEffectHighlight(uv + float2(0.0f,  ringStep.y)));
+		surroundLuma += Color::RGBToLuminance(ExtractEffectHighlight(uv + float2(0.0f, -ringStep.y)));
+		surroundLuma *= 0.25f;
+
+		float separation = saturate((centerLuma - surroundLuma) / max(centerLuma, 1e-4f));
+		float compactSource = smoothstep(0.04f, 0.42f, separation);
+		wideFlareScale = lerp(1.0f, compactSource, rejection);
+	}
+	float3 filteredHighlight = sourceHighlight * wideFlareScale;
+
+	// Compress the extracted highlight with a strictly monotonic curve.  A
+	// simple brightness-dependent multiplier can invert the radial gradient and
+	// expose contour rings around a bright source; this curve never makes a
+	// brighter input darker than a dimmer one.
+	float strongLightSuppression = saturate(StarburstStrongLightSuppression);
+	float strongLightScale = 1.0f;
+	if (strongLightSuppression > 0.0f) {
+		float highlightLuma = Color::RGBToLuminance(filteredHighlight);
+		float threshold = max(HighlightExtractionThreshold, 0.01f);
+		float referenceRange = max(1.0f - threshold, 0.35f);
+		float compressionKnee = referenceRange * 0.35f;
+		if (highlightLuma > compressionKnee) {
+			float highExcess = highlightLuma - compressionKnee;
+			float compressionRate = 12.0f * strongLightSuppression * strongLightSuppression / referenceRange;
+			float compressedLuma = compressionKnee + highExcess / (1.0f + highExcess * compressionRate);
+			strongLightScale = compressedLuma / max(highlightLuma, 1e-4f);
+		}
+	}
+	return filteredHighlight * strongLightScale;
+}
+
+// Screenshot-oriented diffraction rays. Sampling the completed far-blur layer
+// keeps the effect attached to defocused lights instead of reshaping the
+// aperture gather itself.
+float3 CalculateDiffractionStarburst(float2 uv)
+{
+	if (StarburstEnabled == 0 || StarburstStrength <= 0.0f)
+		return 0.0f;
+
+	uint rayCount = clamp(StarburstRays, 4, 12);
+	float stoppedDown = smoothstep(2.8f, 16.0f, FNumber);
+	float strengthScale = lerp(0.30f, 1.0f, stoppedDown);
+	float lengthScale = lerp(0.35f, 1.0f, stoppedDown);
+	float resolutionScale = max(SharedData::BufferDim.y / 1080.0f, 0.5f);
+	float radiusPixels = max(2.0f, 96.0f * saturate(StarburstLength) * lengthScale * resolutionScale);
+	float rotation = StarburstRotationAngle * Math::TAU;
+	float3 streak = 0.0f;
+
+	[loop]
+	for (uint rayIndex = 0; rayIndex < rayCount; ++rayIndex)
+	{
+		float angle = rotation + Math::TAU * ((float)rayIndex / (float)rayCount);
+		float sine;
+		float cosine;
+		sincos(angle, sine, cosine);
+		float2 pixelDirection = float2(cosine * SharedData::BufferDim.z, sine * SharedData::BufferDim.w);
+		[unroll]
+		for (uint sampleIndex = 1; sampleIndex <= 8; ++sampleIndex)
+		{
+			float distanceFraction = (float)sampleIndex / 8.0f;
+			float distancePixels = radiusPixels * distanceFraction;
+			float weight = pow(1.0f - 0.92f * distanceFraction, 1.5f);
+			float2 offset = pixelDirection * distancePixels;
+			streak += ExtractStarburstHighlight(uv + offset) * weight;
+		}
+	}
+
+	return streak * (StarburstStrength * 2.0f * strengthScale * (0.44f / (float)rayCount));
+}
+
+// Returns nearby highlight energy only where the local highlight is weaker.
+// The circular gather avoids introducing another preferred direction and keeps
+// this control visually separate from the diffraction rays.
+float3 CalculateBokehCoreFill(float2 uv, float blurAmount)
+{
+	if (HighlightShape == 0 || BokehCoreFill <= 0.0f)
+		return 0.0f;
+
+	float resolutionScale = max(SharedData::BufferDim.y / 1080.0f, 0.5f);
+	float radiusPixels = lerp(3.0f, 18.0f, saturate(blurAmount)) * resolutionScale;
+	float3 centerHighlight = ExtractEffectHighlight(uv);
+	float3 neighborhood = 0.0f;
+	float totalWeight = 0.0f;
+
+	[unroll]
+	for (uint ringIndex = 1; ringIndex <= 2; ++ringIndex)
+	{
+		float ringFraction = (float)ringIndex * 0.5f;
+		float ringWeight = lerp(1.0f, 0.55f, ringFraction);
+		[unroll]
+		for (uint sampleIndex = 0; sampleIndex < 8; ++sampleIndex)
+		{
+			float angle = Math::TAU * ((float)sampleIndex / 8.0f) + (ringIndex == 2 ? Math::PI / 8.0f : 0.0f);
+			float sine;
+			float cosine;
+			sincos(angle, sine, cosine);
+			float2 offset = float2(cosine * SharedData::BufferDim.z, sine * SharedData::BufferDim.w) *
+				radiusPixels * ringFraction;
+			neighborhood += ExtractEffectHighlight(uv + offset) * ringWeight;
+			totalWeight += ringWeight;
+		}
+	}
+
+	float3 neighborhoodMean = neighborhood / max(totalWeight, 1e-4f);
+	float3 missingCore = max(neighborhoodMean - centerHighlight * 0.35f, 0.0f);
+	return missingCore * (BokehCoreFill * 0.65f);
+}
+
 
 float CalculateBlurDiscSizeForDepth(FocusInfo focusInfo, float pixelDepth)
 {
@@ -1259,12 +1502,12 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 
 	DiscBlurInfo blurInfo;
 	blurInfo.texcoord = 2.0f * (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
-	blurInfo.numberOfRings = round(BlurQuality);
+	blurInfo.numberOfRings = GetFilledApertureRingCount(round(BlurQuality));
 	blurInfo.farPlaneMaxBlurInPixels = (FarPlaneMaxBlur * 0.01f) * invBlurPixelSizeLength;
 	blurInfo.nearPlaneMaxBlurInPixels = (NearPlaneMaxBlur * 0.01f) * invBlurPixelSizeLength;
 	blurInfo.cocFactorPerPixel = blurPixelSizeLength * blurInfo.farPlaneMaxBlurInPixels;  // not needed for near plane.
 
-	const float pointsFirstRing = 7;  // each ring has a multiple of this value of sample points.
+	const float pointsFirstRing = GetFilledAperturePointsFirstRing();  // each ring has a multiple of this value of sample points.
 	float4 color = TexColor[ClampHalfResolutionPixel(int2(DTid))];
 	float colorRadius = TexCoCInput[ClampFullResolutionPixel(int2(2 * DTid))].r;
 	// we'll not process near plane fragments as they're processed in a separate pass.
@@ -1277,6 +1520,16 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float4 average = float4(color.rgb * colorRadius * bokehBusyFactorToUse, bokehBusyFactorToUse);
 	float3 apertureHighlightSum = 0.0f;
 	float apertureHighlightWeightSum = 0.0f;
+	float3 apertureHighlightRimSum = 0.0f;
+	float apertureHighlightRimWeightSum = 0.0f;
+	if (IsApertureFillEnabled())
+	{
+		float centerHighlightWeight = CalculateApertureHighlightWeight(color.rgb, 0.0f, colorRadius);
+		if (centerHighlightWeight > 0.0f)
+			centerHighlightWeight *= GetSkyHighlightEligibility(blurInfo.texcoord);
+		apertureHighlightSum = color.rgb * centerHighlightWeight;
+		apertureHighlightWeightSum = centerHighlightWeight;
+	}
 	float2 pointOffset = float2(0, 0);
 	float2 ringRadiusDeltaCoords = (SharedData::BufferDim.zw * blurInfo.farPlaneMaxBlurInPixels * colorRadius) / blurInfo.numberOfRings;
 	float2 currentRingRadiusCoords = ringRadiusDeltaCoords;
@@ -1329,9 +1582,11 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	for (float ringIndex = 0; ringIndex < blurInfo.numberOfRings; ringIndex++) {
 		float anglePerPoint = Math::TAU / pointsOnRing;
 		float angle = anglePerPoint;
-		float ringWeight = lerp(ringIndex / blurInfo.numberOfRings, 1, bokehBusyFactorToUse);
-		float normalizedRingRadius = (ringIndex + 1.0f) / blurInfo.numberOfRings;
+		float ringWeight = IsApertureFillEnabled() ? 1.0f :
+			lerp(ringIndex / blurInfo.numberOfRings, 1, bokehBusyFactorToUse);
 		ringDistance += cocPerRing;
+		float normalizedRingRadius = (ringIndex + 1.0f) / blurInfo.numberOfRings;
+		float apertureRimFactor = GetApertureRimFactor(normalizedRingRadius);
 		for (float pointNumber = 0; pointNumber < pointsOnRing; pointNumber++) {
 			sincos(angle, pointOffset.y, pointOffset.x);
 			pointOffset = ApplyFarApertureShape(pointOffset, angle);
@@ -1370,6 +1625,9 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 				float weightedHighlight = apertureHighlightWeight * weight;
 				apertureHighlightSum += tap.rgb * weightedHighlight;
 				apertureHighlightWeightSum += weightedHighlight;
+				float weightedRimHighlight = weightedHighlight * apertureRimFactor;
+				apertureHighlightRimSum += tap.rgb * weightedRimHighlight;
+				apertureHighlightRimWeightSum += weightedRimHighlight;
 			}
 			average.rgb += tap.rgb * weight;
 			average.w += weight;
@@ -1419,8 +1677,8 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	}
 
 	// use one extra ring as undersampling is really prominent in near-camera objects.
-	float numberOfRings = max(blurInfo.numberOfRings, 1) + 1;
-	float pointsFirstRing = 7;
+	float numberOfRings = GetFilledApertureRingCount(max(blurInfo.numberOfRings, 1) + 1);
+	float pointsFirstRing = GetFilledAperturePointsFirstRing();
 	// luma is stored in alpha
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
 	float centreCompatibility = CalculateNearPlaneCoCCompatibility(colorRadii.g);
@@ -1450,9 +1708,10 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 		float anglePerPoint = Math::TAU / pointsOnRing;
 		float angle = anglePerPoint;
 		// no further weight needed, bleed all you want.
-		float weight = lerp(ringIndex / numberOfRings, 1, smoothstep(0, 1, bokehBusyFactorToUse));
+		float weight = IsApertureFillEnabled() ? 1.0f :
+			lerp(ringIndex / numberOfRings, 1, smoothstep(0, 1, bokehBusyFactorToUse));
 		float normalizedRingRadius = (ringIndex + 1.0f) / numberOfRings;
-		float apertureRimFactor = smoothstep(0.50f, 0.85f, normalizedRingRadius);
+		float apertureRimFactor = GetApertureRimFactor(normalizedRingRadius);
 		for (float pointNumber = 0; pointNumber < pointsOnRing; pointNumber++) {
 			sincos(angle, pointOffset.y, pointOffset.x);
 			pointOffset = ApplyApertureShape(pointOffset, angle);
@@ -1494,12 +1753,11 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	}
 	float inverseWeight = rcp(average.w + (average.w == 0));
 	average.rgb *= inverseWeight;
-	if (apertureHighlightWeightSum > 0.0f && apertureHighlightRimWeightSum > 0.0f) {
+	float apertureRimBlend = GetApertureRimBlend();
+	if (apertureRimBlend > 0.0f && apertureHighlightWeightSum > 0.0f && apertureHighlightRimWeightSum > 0.0f) {
 		float3 fullHighlightMean = apertureHighlightSum / apertureHighlightWeightSum;
 		float3 rimHighlightMean = apertureHighlightRimSum / apertureHighlightRimWeightSum;
-		// Experiment 15 balance: keep slightly more of the filled footprint while
-		// retaining a clear aperture-perimeter bias for foreground highlights.
-		apertureHighlightSum = lerp(fullHighlightMean, rimHighlightMean, 0.60f) * apertureHighlightWeightSum;
+		apertureHighlightSum = lerp(fullHighlightMean, rimHighlightMean, apertureRimBlend) * apertureHighlightWeightSum;
 	}
 	average.rgb = BlendSoftApertureHighlight(average.rgb, apertureHighlightSum, apertureHighlightWeightSum, average.w);
 	float alpha = saturate((min(2.5, NearPlaneMaxBlur) + 0.4) * (colorRadiusToUse > 0.1 ? (colorRadii.g <= 0 ? 2 : 1) * colorRadiusToUse : max(colorRadiusToUse, -colorRadii.g)));
@@ -1552,6 +1810,8 @@ float4 SampleFarGatherColor(float2 uv, float mip)
 	float nearBlurProtection = max(GetTargetDepthProtection(uv), GetFocusRangeProtection(uv));
 	nearBlend *= 1.0f - nearBlurProtection;
 	color.rgb = lerp(color.rgb, nearFragment.rgb, nearBlend);
+	float highlightEffectDepthMask = smoothstep(0.02f, 0.18f, realCoC);
+	color.rgb += (CalculateDiffractionStarburst(uv) + CalculateBokehCoreFill(uv, realCoC)) * highlightEffectDepthMask;
 	float skyProtection = RecoverSkyInteriorProtection(DTid, uv, pixelCoC);
 	color.rgb = lerp(color.rgb, sourceFragment.rgb, skyProtection);
 	// Exact sky restoration can make alpha-tested foliage and other thin

@@ -101,9 +101,19 @@ namespace
 		std::uint32_t keepSkySharp;
 		Float2 targetGuardAxis;
 		std::uint32_t experimentalTransparencyMode;
-		std::uint32_t padding5;
+		std::uint32_t apertureOptions;
+		std::uint32_t starburstEnabled;
+		std::uint32_t starburstRays;
+		float starburstStrength;
+		float starburstLength;
+		float highlightExtractionThreshold;
+		float starburstRotationAngle;
+		float bokehCoreFill;
+		float starburstWideFlareSuppression;
+		float starburstStrongLightSuppression;
+		std::array<float, 3> starburstPadding;
 	};
-	static_assert(sizeof(DoFConstants) == 144);
+	static_assert(sizeof(DoFConstants) == 192);
 
 	struct alignas(16) SharedConstants
 	{
@@ -1713,7 +1723,19 @@ void CDoF::DoFRenderer::Dispatch(
 		.targetGuardAxis = a_targetGuard ?
 			Float2{ a_targetGuard->guardAxis[0], a_targetGuard->guardAxis[1] } : Float2{},
 		.experimentalTransparencyMode = activeTransparencyMode,
-		.padding5 = 0U
+		// Bit 0 enables the dense filled gather; bits 1-2 select the procedural shape.
+		.apertureOptions = (a_settings.apertureBokeh && a_settings.apertureFill ? 1U : 0U) |
+			(std::clamp(a_settings.apertureShape, 0U, 2U) << 1U),
+		.starburstEnabled = a_settings.starburstEnabled ? 1U : 0U,
+		.starburstRays = std::clamp(a_settings.starburstRays, 4U, 12U),
+		.starburstStrength = std::clamp(a_settings.starburstStrength, 0.0F, 8.0F),
+		.starburstLength = std::clamp(a_settings.starburstLength, 0.05F, 1.0F),
+		.highlightExtractionThreshold = std::clamp(a_settings.highlightExtractionThreshold, 0.20F, 1.50F),
+		.starburstRotationAngle = std::clamp(a_settings.starburstRotationDegrees, 0.0F, 180.0F) / 360.0F,
+		.bokehCoreFill = std::clamp(a_settings.bokehCoreFill, 0.0F, 2.0F),
+		.starburstWideFlareSuppression = std::clamp(a_settings.starburstWideFlareSuppression, 0.0F, 1.0F),
+		.starburstStrongLightSuppression = std::clamp(a_settings.starburstStrongLightSuppression, 0.0F, 1.0F),
+		.starburstPadding = {}
 	};
 	const SharedConstants sharedData{
 		.cameraData = GetCameraData(),
